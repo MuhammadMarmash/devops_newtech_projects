@@ -1,0 +1,83 @@
+#!/bin/bash
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# EC2 user_data: provision + run the Flask Todo API under gunicorn + systemd
+# Runs once at first boot, as root, non-interactively.
+# Logs to /var/log/user-data.log (and the console) for debugging.
+#
+# This is a Terraform template (templatefile). Values in $${...} are bash
+# variables (escaped so Terraform leaves them alone); values in $${var} are
+# injected by Terraform at plan/apply time.
+# ---------------------------------------------------------------------------
+exec > >(tee -a /var/log/user-data.log) 2>&1
+
+# ---- Config (injected by Terraform) --------------------------------------
+REPO_URL="${repo_url}"
+REPO_BRANCH="${repo_branch}"
+APP_USER="${app_user}"
+APP_HOME="${app_home}"                       # where the repo is cloned
+APP_DIR="${app_home}/${app_subdir}"          # dir containing main.py / requirements.txt
+WSGI_TARGET="${wsgi_target}"                  # <module>:<Flask app variable>
+APP_PORT="${app_port}"
+GUNICORN_WORKERS="${gunicorn_workers}"
+
+# ---- 1. Update system packages -------------------------------------------
+# Amazon Linux 2023 uses dnf, not apt.
+dnf upgrade -y
+
+# ---- 2. Install Python 3.11+, pip, git -----------------------------------
+# AL2023 ships python3.9 by default; python3.11 is available in the repos.
+# venv and ensurepip are bundled with the python3.11 package (no separate
+# *-venv package like on Debian/Ubuntu).
+dnf install -y python3.11 python3.11-pip git
+
+# ---- 3. Create app user and directory ------------------------------------
+# System user, no login shell, owns the app tree.
+id -u "$${APP_USER}" &>/dev/null || useradd --system --create-home --shell /usr/sbin/nologin "$${APP_USER}"
+mkdir -p "$${APP_HOME}"
+chown -R "$${APP_USER}:$${APP_USER}" "$${APP_HOME}"
+
+# ---- 4. Clone the GitHub repository --------------------------------------
+if [ -d "$${APP_HOME}/.git" ]; then
+  sudo -u "$${APP_USER}" git -C "$${APP_HOME}" pull --ff-only
+else
+  sudo -u "$${APP_USER}" git clone --branch "$${REPO_BRANCH}" "$${REPO_URL}" "$${APP_HOME}"
+fi
+
+# ---- 5. Create the Python virtual environment ----------------------------
+sudo -u "$${APP_USER}" python3.11 -m venv "$${APP_HOME}/venv"
+
+# ---- 6 & 7. Install dependencies + gunicorn ------------------------------
+# gunicorn is already pinned in requirements.txt; install it explicitly too
+# so the service works even if that ever changes.
+sudo -u "$${APP_USER}" "$${APP_HOME}/venv/bin/pip" install --upgrade pip
+sudo -u "$${APP_USER}" "$${APP_HOME}/venv/bin/pip" install -r "$${APP_DIR}/requirements.txt"
+sudo -u "$${APP_USER}" "$${APP_HOME}/venv/bin/pip" install gunicorn
+
+# ---- 8. Create the systemd service file ----------------------------------
+cat > /etc/systemd/system/todo-api.service <<EOF
+[Unit]
+Description=Todo API (Flask + gunicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=$${APP_USER}
+Group=$${APP_USER}
+WorkingDirectory=$${APP_DIR}
+Environment="PATH=$${APP_HOME}/venv/bin"
+ExecStart=$${APP_HOME}/venv/bin/gunicorn --workers $${GUNICORN_WORKERS} --bind 0.0.0.0:$${APP_PORT} $${WSGI_TARGET}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# ---- 9. Start the application service -------------------------------------
+systemctl daemon-reload
+systemctl enable todo-api.service
+systemctl restart todo-api.service
+
+echo "user_data provisioning complete."
