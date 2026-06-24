@@ -1,0 +1,6 @@
+[flake8]
+# Align flake8 with black's formatting (black wraps at 88 chars).
+max-line-length = 88
+# E203 (whitespace before ':') and W503 (line break before binary operator)
+# are intentional in black's style, so ignore them.
+extend-ignore = E203, W503
