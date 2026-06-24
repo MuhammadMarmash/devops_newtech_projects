@@ -6,7 +6,9 @@ terraform {
     }
   }
 }
-
+provider "aws" {
+  region = var.region
+}
 module "vpc_module" {
   source       = "./modules/vpc"
   project_name = var.project_name
@@ -24,8 +26,22 @@ module "security_group_module" {
 module "ec2_module" {
   source            = "./modules/ec2"
   security_group_id = module.security_group_module.security_group_id
-  subnet_id         = module.vpc_module.public_subnet_ids
+  subnet_id         = module.vpc_module.public_subnet_id
   project_name      = var.project_name
   environment       = var.environment
 }
 
+#making elastic ip for ec2 instance
+resource "aws_eip" "ec2_eip" {
+  domain = "vpc"
+  tags = {
+    Name        = "${var.project_name}-${var.environment}-ec2-eip"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+resource "aws_eip_association" "ec2_eip_assoc" {
+  instance_id   = module.ec2_module.instance_id
+  allocation_id = aws_eip.ec2_eip.id
+}

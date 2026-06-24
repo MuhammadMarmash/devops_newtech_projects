@@ -1,5 +1,20 @@
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical's official AWS account
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 resource "aws_instance" "ec2_instance" {
-  ami             = var.ami
+  ami             = data.aws_ami.ubuntu.id
   instance_type   = var.instance_type
   key_name        = aws_key_pair.my_key.key_name
   subnet_id       = var.subnet_id
