@@ -32,7 +32,7 @@ resource "aws_instance" "ec2_instance" {
     Environment = var.environment
     name        = "${var.project_name}-${var.environment}-ec2"
   }
-
+  #this block was done by ai
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
     repo_url         = var.repo_url
     repo_branch      = var.repo_branch

@@ -37,13 +37,13 @@ jobs:
           pip install coverage
           coverage run -m pytest
           coverage report -m
-
       - name: Deploy to EC2 over SSH
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          #from here and underneath was done by ai
           script: |
             set -e
             sudo -u appuser git -C /opt/todo-api pull --ff-only
