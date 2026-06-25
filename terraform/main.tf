@@ -30,18 +30,3 @@ module "ec2_module" {
   project_name      = var.project_name
   environment       = var.environment
 }
-
-#making elastic ip for ec2 instance
-resource "aws_eip" "ec2_eip" {
-  domain = "vpc"
-  tags = {
-    Name        = "${var.project_name}-${var.environment}-ec2-eip"
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-resource "aws_eip_association" "ec2_eip_assoc" {
-  instance_id   = module.ec2_module.instance_id
-  allocation_id = aws_eip.ec2_eip.id
-}

@@ -1,12 +1,3 @@
-# ---------------------------------------------------------------------------
-# GitHub Actions OIDC trust
-#
-# Lets the deploy workflow authenticate to AWS with NO long-lived access keys.
-# GitHub mints a short-lived OIDC token per run; AWS trusts it ONLY for this
-# repo on the main branch (the `sub` condition below), then hands back
-# temporary credentials scoped to the permissions in the attached policy.
-# ---------------------------------------------------------------------------
-
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
@@ -26,7 +17,6 @@ resource "aws_iam_role" "github_deploy" {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
-        # Only workflows on main of THIS repo may assume the role.
         StringLike = {
           "token.actions.githubusercontent.com:sub" = "repo:MuhammadMarmash/devops-mini-project1:ref:refs/heads/main"
         }
@@ -35,7 +25,6 @@ resource "aws_iam_role" "github_deploy" {
   })
 }
 
-# Least-privilege: find the running instance + push the deploy command via SSM.
 resource "aws_iam_role_policy" "github_deploy_ssm" {
   name = "allow-ssm-deploy"
   role = aws_iam_role.github_deploy.id

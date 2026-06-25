@@ -81,3 +81,17 @@ resource "aws_iam_role" "ssm" {
     name = "${var.project_name}-${var.environment}-ssm"
     role = aws_iam_role.ssm.name
   }
+
+resource "aws_eip" "ec2_eip" {
+  domain = "vpc"
+  tags = {
+    Name        = "${var.project_name}-${var.environment}-ec2-eip"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+resource "aws_eip_association" "ec2_eip_assoc" {
+  instance_id   = aws_instance.ec2_instance.id
+  allocation_id = aws_eip.ec2_eip.id
+}

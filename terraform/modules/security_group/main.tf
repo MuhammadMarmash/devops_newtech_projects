@@ -9,15 +9,6 @@ resource "aws_security_group" "main" {
   }
 }
 
-resource "aws_security_group_rule" "ssh" {
-  type              = "ingress"
-  from_port         = 22
-  to_port           = 22
-  protocol          = "tcp"
-  cidr_blocks       = ["${var.my_ip}/32"]
-  security_group_id = aws_security_group.main.id
-}
-
 resource "aws_security_group_rule" "http_https" {
   count             = length(var.allowed_ports)
   type              = "ingress"
