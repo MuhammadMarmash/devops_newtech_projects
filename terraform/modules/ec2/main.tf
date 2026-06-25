@@ -21,6 +21,7 @@ resource "aws_instance" "ec2_instance" {
   vpc_security_group_ids = [var.security_group_id]
   associate_public_ip_address = true
   user_data_replace_on_change = true
+  iam_instance_profile = aws_iam_instance_profile.ssm.name
 
   root_block_device {
     volume_size = var.size
@@ -60,3 +61,23 @@ resource "local_file" "private_key" {
   filename        = "${var.project_name}-${var.environment}-key.pem"
   file_permission = "0400"
 }
+
+resource "aws_iam_role" "ssm" {
+    name = "${var.project_name}-${var.environment}-ssm"
+    assume_role_policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [{
+        Effect    = "Allow"
+        Principal = { Service = "ec2.amazonaws.com" }
+        Action    = "sts:AssumeRole"
+      }]
+    })
+  }
+  resource "aws_iam_role_policy_attachment" "ssm_core" {
+    role       = aws_iam_role.ssm.name
+    policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  }
+  resource "aws_iam_instance_profile" "ssm" {
+    name = "${var.project_name}-${var.environment}-ssm"
+    role = aws_iam_role.ssm.name
+  }
