@@ -4,7 +4,7 @@ set -euo pipefail
 # EC2 user_data: provision the host to run the Flask Todo API as a Docker
 # container via docker compose. Runs once at first boot, as root.
 # Logs to /var/log/user-data.log for debugging.
-# Values in $${...} are bash vars (escaped); ${var} are injected by Terraform.
+# Values in $${...} are bash vars (escaped); $${var} are injected by Terraform.
 # ---------------------------------------------------------------------------
 exec > >(tee -a /var/log/user-data.log) 2>&1
 
