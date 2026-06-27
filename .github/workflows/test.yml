@@ -8,6 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - name: Set up Python 3.11
         uses: actions/setup-python@v6
         with:
@@ -28,6 +30,11 @@ jobs:
           # Exclude tests/ (assert use is expected there) and skip B104
           # (binding to 0.0.0.0 is intentional for the deployed app).
           bandit -r . -x ./tests --skip B104
+      - name: secret scanning
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run tests with pytest
         working-directory: ./app
         run: |

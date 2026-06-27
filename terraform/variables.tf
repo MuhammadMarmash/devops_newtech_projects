@@ -1,8 +1,3 @@
-variable "my_ip" {
-  description = "Your IP address"
-  type        = string
-}
-
 variable "project_name" {
   description = "The name of the project"
   type        = string

@@ -5,6 +5,13 @@ terraform {
       version = "~> 5.0"
     }
   }
+  backend "s3" {
+      bucket       = "mini-project1-tfstate-284483510847"
+      key          = "mini-project1/terraform.tfstate"
+      region       = "eu-north-1"
+      encrypt      = true
+      use_lockfile = true
+    }
 }
 provider "aws" {
   region = var.region
@@ -18,7 +25,6 @@ module "vpc_module" {
 module "security_group_module" {
   source       = "./modules/security_group"
   vpc_id       = module.vpc_module.vpc_id
-  my_ip        = var.my_ip
   project_name = var.project_name
   environment  = var.environment
 }

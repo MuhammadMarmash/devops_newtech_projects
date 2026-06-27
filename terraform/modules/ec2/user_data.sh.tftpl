@@ -1,85 +1,34 @@
 #!/bin/bash
 set -euo pipefail
-# all of this was done by ai
 # ---------------------------------------------------------------------------
-# EC2 user_data: provision + run the Flask Todo API under gunicorn + systemd
-# Runs once at first boot, as root, non-interactively.
-# Logs to /var/log/user-data.log (and the console) for debugging.
-#
-# This is a Terraform template (templatefile). Values in $${...} are bash
-# variables (escaped so Terraform leaves them alone); values in $${var} are
-# injected by Terraform at plan/apply time.
+# EC2 user_data: provision the host to run the Flask Todo API as a Docker
+# container via docker compose. Runs once at first boot, as root.
+# Logs to /var/log/user-data.log for debugging.
+# Values in $${...} are bash vars (escaped); ${var} are injected by Terraform.
 # ---------------------------------------------------------------------------
 exec > >(tee -a /var/log/user-data.log) 2>&1
 
-# ---- Config (injected by Terraform) --------------------------------------
 REPO_URL="${repo_url}"
 REPO_BRANCH="${repo_branch}"
-APP_USER="${app_user}"
-APP_HOME="${app_home}"                       # where the repo is cloned
-APP_DIR="${app_home}/${app_subdir}"          # dir containing main.py / requirements.txt
-WSGI_TARGET="${wsgi_target}"                  # <module>:<Flask app variable>
-APP_PORT="${app_port}"
-GUNICORN_WORKERS="${gunicorn_workers}"
+APP_HOME="${app_home}"        # repo is cloned here; docker-compose.yml lives at its root
 
-# ---- 1. Update system packages -------------------------------------------
-# Ubuntu uses apt. DEBIAN_FRONTEND=noninteractive stops apt from prompting
-# (this script runs unattended at first boot).
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get upgrade -y
+apt-get install -y git
 
-# ---- 2. Install Python 3, pip, git ---------------------------------------
-# Ubuntu 22.04 (jammy) ships Python 3.10, which the app runs on fine.
-# Unlike AL2023, the venv module is a SEPARATE package (python3-venv).
-apt-get install -y python3 python3-venv python3-pip git
+# Install Docker Engine + Compose plugin (official convenience script).
+curl -fsSL https://get.docker.com | sh
 
-# ---- 3. Create app user and directory ------------------------------------
-# System user, no login shell, owns the app tree.
-id -u "$${APP_USER}" &>/dev/null || useradd --system --create-home --shell /usr/sbin/nologin "$${APP_USER}"
-mkdir -p "$${APP_HOME}"
-chown -R "$${APP_USER}:$${APP_USER}" "$${APP_HOME}"
-
-# ---- 4. Clone the GitHub repository --------------------------------------
+# Clone (or update) the repo.
 if [ -d "$${APP_HOME}/.git" ]; then
-  sudo -u "$${APP_USER}" git -C "$${APP_HOME}" pull --ff-only
+  git -C "$${APP_HOME}" pull --ff-only
 else
-  sudo -u "$${APP_USER}" git clone --branch "$${REPO_BRANCH}" "$${REPO_URL}" "$${APP_HOME}"
+  git clone --branch "$${REPO_BRANCH}" "$${REPO_URL}" "$${APP_HOME}"
 fi
 
-# ---- 5. Create the Python virtual environment ----------------------------
-sudo -u "$${APP_USER}" python3 -m venv "$${APP_HOME}/venv"
-
-# ---- 6 & 7. Install dependencies + gunicorn ------------------------------
-# gunicorn is already pinned in requirements.txt; install it explicitly too
-# so the service works even if that ever changes.
-sudo -u "$${APP_USER}" "$${APP_HOME}/venv/bin/pip" install --upgrade pip
-sudo -u "$${APP_USER}" "$${APP_HOME}/venv/bin/pip" install -r "$${APP_DIR}/requirements.txt"
-sudo -u "$${APP_USER}" "$${APP_HOME}/venv/bin/pip" install gunicorn
-
-# ---- 8. Create the systemd service file ----------------------------------
-cat > /etc/systemd/system/todo-api.service <<EOF
-[Unit]
-Description=Todo API (Flask + gunicorn)
-After=network.target
-
-[Service]
-Type=simple
-User=$${APP_USER}
-Group=$${APP_USER}
-WorkingDirectory=$${APP_DIR}
-Environment="PATH=$${APP_HOME}/venv/bin"
-ExecStart=$${APP_HOME}/venv/bin/gunicorn --workers $${GUNICORN_WORKERS} --bind 0.0.0.0:$${APP_PORT} $${WSGI_TARGET}
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# ---- 9. Start the application service -------------------------------------
-systemctl daemon-reload
-systemctl enable todo-api.service
-systemctl restart todo-api.service
+# Build the image and start the container. The restart policy in
+# docker-compose.yml brings it back up after reboots.
+cd "$${APP_HOME}"
+docker compose up -d --build
 
 echo "user_data provisioning complete."

@@ -3,11 +3,6 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "my_ip" {
-  description = "Your IP address for SSH access"
-  type        = string
-}
-
 variable "allowed_cidr_blocks" {
   description = "List of CIDR blocks allowed for HTTP and HTTPS access"
   type        = list(string)
