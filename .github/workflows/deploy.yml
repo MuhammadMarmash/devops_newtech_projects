@@ -3,17 +3,19 @@ on:
   push:
     branches: [main]
 
-# Required so the workflow can request a GitHub OIDC token to assume the
-# AWS deploy role. contents:read is the default we keep for checkout.
+# id-token:write lets the workflow request an OIDC token to assume the AWS role.
+# contents:write lets the version-bump step push a new git tag.
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # full history + tags, needed for the version bump
       - name: Set up Python 3.11
         uses: actions/setup-python@v6
         with:
@@ -61,6 +63,38 @@ jobs:
           echo "Target instance: $ID"
           echo "INSTANCE_ID=$ID" >> "$GITHUB_ENV"
 
+      - name: Detect application code changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            code:
+              - 'app/**'
+              - '!app/tests/**'
+              - 'docker-compose.yml'
+
+      - name: Bump version tag (only when code changed)
+        id: bump
+        if: steps.filter.outputs.code == 'true'
+        uses: anothrNick/github-tag-action@1.71.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: patch
+          INITIAL_VERSION: 1.0.0
+
+      - name: Resolve version to deploy
+        id: ver
+        run: |
+          if [ "${{ steps.filter.outputs.code }}" = "true" ]; then
+            V="${{ steps.bump.outputs.new_tag }}"
+          else
+            # No code change → keep the current version (latest tag, or 'dev')
+            V="$(git describe --tags --abbrev=0 2>/dev/null || echo dev)"
+          fi
+          echo "Deploying version: $V"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
       - name: Deploy via SSM Run Command
         run: |
           CMD_ID=$(aws ssm send-command \
@@ -71,7 +105,7 @@ jobs:
                 "set -e",
                 "cd /opt/todo-api",
                 "git pull --ff-only",
-                "export APP_VERSION=$(git rev-parse --short HEAD)",
+                "export APP_VERSION=${{ steps.ver.outputs.version }}",
                 "docker compose up -d --build",
                 "docker image prune -f"
               ]' \
