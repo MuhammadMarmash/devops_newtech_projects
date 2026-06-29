@@ -1,5 +1,8 @@
 # Mini Project 1: Deploy a Web App with Full CI/CD Pipeline
 
+[![CI - Tests](https://github.com/MuhammadMarmash/devops-mini-project1/actions/workflows/test.yml/badge.svg)](https://github.com/MuhammadMarmash/devops-mini-project1/actions/workflows/test.yml)
+[![CD - Deploy](https://github.com/MuhammadMarmash/devops-mini-project1/actions/workflows/deploy.yml/badge.svg)](https://github.com/MuhammadMarmash/devops-mini-project1/actions/workflows/deploy.yml)
+
 ## 🎯 Project Overview
 
 This capstone project integrates everything you've learned in the DevOps course so far: **Git source control**, **Terraform**, **GitHub Actions**, and **AWS**. You'll build a complete CI/CD pipeline that automatically tests Python code and deploys it to an AWS EC2 instance.
