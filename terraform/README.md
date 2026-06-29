@@ -144,6 +144,46 @@ terraform destroy     # tear everything down
 
 ---
 
+## Multiple environments
+
+The same configuration serves `dev`, `staging`, and `prod` via **Terraform workspaces**
+plus one variable file per environment. Because every resource is named/tagged
+`${project_name}-${environment}-...`, the environments are fully isolated — separate
+VPCs, instances, and Elastic IPs — with zero code duplication.
+
+Workspaces also isolate **state** automatically: with the S3 backend, non-default
+workspaces are stored under an `env:/<workspace>/` prefix in the same bucket.
+
+| Environment | Workspace | Var file |
+|-------------|-----------|----------------|
+| dev | `default` | `dev.tfvars` |
+| staging | `staging` | `staging.tfvars` |
+| prod | `prod` | `prod.tfvars` |
+
+```bash
+# one-time: create the workspaces
+terraform workspace new staging
+terraform workspace new prod
+terraform workspace list
+
+# work on a specific environment
+terraform workspace select staging
+terraform apply   -var-file=staging.tfvars
+terraform destroy -var-file=staging.tfvars   # tear down when done
+
+terraform workspace select prod
+terraform apply   -var-file=prod.tfvars
+```
+
+Environment-specific overrides (e.g. a larger `instance_type` for prod) go in that
+environment's `*.tfvars` file.
+
+> **CI note:** the deploy workflow finds its target by `tag:Project`. If more than one
+> environment runs at once, add a `tag:Environment` filter to the lookup so deploys
+> target the intended instance.
+
+---
+
 ## Outputs
 
 | Output | Description |

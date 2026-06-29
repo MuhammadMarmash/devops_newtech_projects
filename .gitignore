@@ -18,6 +18,9 @@ htmlcov/
 .terraform.lock.hcl
 *.tfvars
 !terraform.tfvars.example
+!dev.tfvars
+!staging.tfvars
+!prod.tfvars
 
 # IDE
 .vscode/
