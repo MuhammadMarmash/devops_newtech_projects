@@ -16,3 +16,10 @@ module "security" {
   ssh_allowed_cidrs = var.ssh_allowed_cidrs
   pod_cidr          = var.pod_cidr
 }
+
+module "iam" {
+  source = "./modules/iam"
+
+  name_prefix     = var.name_prefix
+  ssm_path_prefix = var.ssm_path_prefix
+}
