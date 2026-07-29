@@ -114,3 +114,10 @@ module "workers" {
   # every download, with no error that points at the network.
   depends_on = [module.network]
 }
+
+module "ssm" {
+  source = "./modules/ssm"
+
+  ssm_path_prefix = var.ssm_path_prefix
+  api_endpoint    = module.server.private_ip
+}
