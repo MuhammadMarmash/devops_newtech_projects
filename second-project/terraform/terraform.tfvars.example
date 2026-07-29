@@ -1,0 +1,29 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored.
+
+region            = "eu-north-1"
+availability_zone = "eu-north-1a"
+name_prefix       = "kthw"
+
+# Network. These must never overlap each other.
+vpc_cidr            = "10.240.0.0/16"
+public_subnet_cidr  = "10.240.0.0/24"
+private_subnet_cidr = "10.240.1.0/24"
+pod_cidr            = "10.200.0.0/16"
+service_cidr        = "10.32.0.0/24"
+
+cluster_domain = "kubernetes.local"
+
+# Workers are keyed by name, so lowering this destroys only the highest-numbered nodes.
+worker_count = 2
+
+jumpbox_instance_type = "t3.micro"
+server_instance_type  = "t3.small"
+worker_instance_type  = "t3.small"
+
+jumpbox_volume_size_gb = 10
+node_volume_size_gb    = 20
+
+# Strongly recommended: replace with ["YOUR.IP.ADDR.ESS/32"].
+ssh_allowed_cidrs = ["0.0.0.0/0"]
+
+ssm_path_prefix = "/kthw"
