@@ -1,0 +1,47 @@
+name: test-on-pull-request
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.11
+      - name: Install dependencies
+        working-directory: ./app
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: lint with flake8
+        working-directory: ./app
+        run: |
+          flake8 .
+      - name: security check with bandit
+        working-directory: ./app
+        run: |
+          # Exclude tests/ (assert use is expected there) and skip B104
+          # (binding to 0.0.0.0 is intentional for the deployed app).
+          bandit -r . -x ./tests --skip B104
+      - name: secret scanning
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run tests with pytest
+        working-directory: ./app
+        run: |
+          pytest --maxfail=5 --disable-warnings -q
+      - name: check_coverage
+        working-directory: ./app
+        run: |
+          pip install coverage
+          coverage run -m pytest
+          coverage report -m

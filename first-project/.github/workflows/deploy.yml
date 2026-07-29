@@ -1,0 +1,137 @@
+name: deploy-on-push
+on:
+  push:
+    branches: [main]
+
+# id-token:write lets the workflow request an OIDC token to assume the AWS role.
+# contents:write lets the version-bump step push a new git tag.
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # full history + tags, needed for the version bump
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.11
+      - name: Install dependencies
+        working-directory: ./app
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: lint with flake8
+        working-directory: ./app
+        run: |
+          flake8 .
+      - name: security check with bandit
+        working-directory: ./app
+        run: |
+          # Exclude tests/ (assert use is expected there) and skip B104
+          # (binding to 0.0.0.0 is intentional for the deployed app).
+          bandit -r . -x ./tests --skip B104
+      - name: Run tests with pytest
+        working-directory: ./app
+        run: |
+          pytest --maxfail=5 --disable-warnings -q
+      - name: check_coverage
+        working-directory: ./app
+        run: |
+          pip install coverage
+          coverage run -m pytest
+          coverage report -m
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::284483510847:role/github-deploy-role
+          aws-region: eu-north-1
+
+      - name: Resolve target instance id
+        run: |
+          # Look the instance up by tag so a rebuilt instance (new ID) still works.
+          ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Project,Values=mini-project1" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          test -n "$ID" || { echo "No running instance found"; exit 1; }
+          echo "Target instance: $ID"
+          echo "INSTANCE_ID=$ID" >> "$GITHUB_ENV"
+
+      - name: Detect application code changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            code:
+              - 'app/**'
+              - '!app/tests/**'
+              - 'docker-compose.yml'
+
+      - name: Bump version tag (only when code changed)
+        id: bump
+        if: steps.filter.outputs.code == 'true'
+        uses: anothrNick/github-tag-action@1.71.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: patch
+          INITIAL_VERSION: 1.0.0
+
+      - name: Resolve version to deploy
+        id: ver
+        run: |
+          if [ "${{ steps.filter.outputs.code }}" = "true" ]; then
+            V="${{ steps.bump.outputs.new_tag }}"
+          else
+            # No code change → keep the current version (latest tag, or 'dev')
+            V="$(git describe --tags --abbrev=0 2>/dev/null || echo dev)"
+          fi
+          echo "Deploying version: $V"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy via SSM Run Command
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "CI deploy ${GITHUB_SHA::7}" \
+            --parameters 'commands=[
+                "set -e",
+                "cd /opt/todo-api",
+                "git pull --ff-only",
+                "export APP_VERSION=${{ steps.ver.outputs.version }}",
+                "docker compose up -d --build",
+                "docker image prune -f"
+              ]' \
+            --query 'Command.CommandId' --output text)
+          echo "Command ID: $CMD_ID"
+
+          # Wait for the remote script to finish, then surface its output + status.
+          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" || true
+          echo "----- remote stdout -----"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text
+          echo "----- remote stderr -----"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query StandardErrorContent --output text
+          STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query Status --output text)
+          echo "Deploy status: $STATUS"
+          [ "$STATUS" = "Success" ]
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsS "http://${{ secrets.EC2_HOST }}:5000/health"; then
+              echo ""
+              echo "App is healthy ✅"
+              exit 0
+            fi
+            echo "Waiting for app to come up... ($i/10)"
+            sleep 5
+          done
+          echo "Health check failed ❌"
+          exit 1

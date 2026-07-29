@@ -1,0 +1,2 @@
+project_name = "mini-project1"
+environment  = "staging"
