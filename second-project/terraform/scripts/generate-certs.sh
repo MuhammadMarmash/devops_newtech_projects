@@ -117,4 +117,15 @@ aws ssm put-parameter \
   --overwrite \
   --value "$(cat ca.crt)"
 
+echo "Distributing node certificates"
+for name in "${NODE_NAMES[@]}"; do
+  ip="${NODE_IP[${name}]}"
+  ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${ip}" "sudo mkdir -p /var/lib/kubelet"
+  scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no ca.crt "admin@${ip}:/tmp/ca.crt"
+  scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "${name}.crt" "admin@${ip}:/tmp/kubelet.crt"
+  scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "${name}.key" "admin@${ip}:/tmp/kubelet.key"
+  ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${ip}" \
+    "sudo mv /tmp/ca.crt /tmp/kubelet.crt /tmp/kubelet.key /var/lib/kubelet/ && sudo chown root:root /var/lib/kubelet/ca.crt /var/lib/kubelet/kubelet.crt /var/lib/kubelet/kubelet.key"
+done
+
 echo "Phase 2 cert bootstrap complete"
