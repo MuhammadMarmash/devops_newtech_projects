@@ -111,26 +111,31 @@ certificate authority, automatically, as part of `terraform apply`. No separate 
 run by hand.
 
 **What it does.** Over SSH, it uploads `scripts/ca.conf.template` (rendered with the
-server's real private IP) and `scripts/generate-certs.sh` to the jumpbox, then runs the
-script there: generate a self-signed CA, sign six leaf certificates with it — `admin`,
-`kube-proxy`, `kube-scheduler`, `kube-controller-manager`, `kube-api-server`,
-`service-accounts` — verify every signature and every CN/O/SAN field, and publish
-`ca.crt` to `/kthw/ca.crt` in SSM using the jumpbox's own IAM role.
+server's real private IP and one `[node-N]` section per actual worker), the operator's
+own SSH private key, and `scripts/generate-certs.sh` to the jumpbox, then runs the script
+there: generate a self-signed CA, sign one leaf certificate per worker plus six
+control-plane certificates — `admin`, `kube-proxy`, `kube-scheduler`,
+`kube-controller-manager`, `kube-api-server`, `service-accounts` — verify every signature
+and every CN/O/SAN field, publish `ca.crt` to `/kthw/ca.crt` in SSM using the jumpbox's
+own IAM role, then hop from the jumpbox to each worker over SSH and `scp` its cert/key
+pair plus `ca.crt` into `/var/lib/kubelet/`. This matches upstream KTHW's own method
+(`docs/04-certificate-authority.md`'s "Distribute the Client and Server Certificates")
+rather than kubelet TLS bootstrapping — this project is for learning the manual mechanism,
+not production-grade automation.
 
 **Why the jumpbox, not your laptop.** The CA private key must exist in exactly one
 place. Running the script locally would put it on the operator's machine first; running
-it over `remote-exec` means it is born on the jumpbox and never leaves.
+it over `remote-exec` means it is born on the jumpbox and never leaves. The operator's SSH
+private key does get copied to the jumpbox (`/home/admin/kthw.pem`) so it can reach the
+workers in turn — that key isn't as sensitive as the CA key, and copying it matches what
+this project's own testing steps already do by hand.
 
 **Why `openssl`, not a Python library.** This project's goal is understanding what
 Kubernetes The Hard Way does, not building the most testable toolchain. `ca.conf.template`
-reproduces upstream's `ca.conf`, with two deliberate edits: the apiserver certificate's SAN
-list is templated, because its IP is only known after `terraform apply`; and the
-`node-0`/`node-1` sections are removed, since this project signs no per-node certificates.
-
-**No per-node certificates.** Any pre-generated node certificate requires shipping a
-private key to a machine that doesn't exist yet, and every transport available for that is
-broken. Nodes generate their own keys locally in Phase 4, so `ca.conf.template` omits the
-`node-0`/`node-1` sections upstream's file has rather than carrying unused config.
+reproduces upstream's `ca.conf`, with one deliberate edit: the apiserver certificate's SAN
+list is templated, because its IP is only known after `terraform apply`. The `[node-N]`
+sections are generated once per worker via Terraform's own `%{ for }` template syntax,
+since `var.worker_count` is a variable in this project, unlike upstream's fixed two nodes.
 
 **Idempotency.** Terraform provisioners fire once, at creation; the `triggers` block only
 forces a re-run if the server's IP changes. `generate-certs.sh` also checks for an
