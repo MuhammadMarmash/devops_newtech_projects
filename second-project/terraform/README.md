@@ -104,6 +104,40 @@ service, and IMDSv1 is the classic SSRF-to-credential-theft path.
 private key in plaintext in state — tolerable only because state is local and gitignored.
 Moving to remote state would require encryption first.
 
+## Phase 2 — PKI bootstrap
+
+`null_resource.cert_bootstrap` turns the four machines above into a cluster with a real
+certificate authority, automatically, as part of `terraform apply`. No separate script to
+run by hand.
+
+**What it does.** Over SSH, it uploads `scripts/ca.conf.template` (rendered with the
+server's real private IP) and `scripts/generate-certs.sh` to the jumpbox, then runs the
+script there: generate a self-signed CA, sign six leaf certificates with it — `admin`,
+`kube-proxy`, `kube-scheduler`, `kube-controller-manager`, `kube-api-server`,
+`service-accounts` — verify every signature and every CN/O/SAN field, and publish
+`ca.crt` to `/kthw/ca.crt` in SSM using the jumpbox's own IAM role.
+
+**Why the jumpbox, not your laptop.** The CA private key must exist in exactly one
+place. Running the script locally would put it on the operator's machine first; running
+it over `remote-exec` means it is born on the jumpbox and never leaves.
+
+**Why `openssl`, not a Python library.** This project's goal is understanding what
+Kubernetes The Hard Way does, not building the most testable toolchain. `ca.conf.template`
+reproduces upstream's `ca.conf`, with two deliberate edits: the apiserver certificate's SAN
+list is templated, because its IP is only known after `terraform apply`; and the
+`node-0`/`node-1` sections are removed, since this project signs no per-node certificates.
+
+**No per-node certificates.** Any pre-generated node certificate requires shipping a
+private key to a machine that doesn't exist yet, and every transport available for that is
+broken. Nodes generate their own keys locally in Phase 4, so `ca.conf.template` omits the
+`node-0`/`node-1` sections upstream's file has rather than carrying unused config.
+
+**Idempotency.** Terraform provisioners fire once, at creation; the `triggers` block only
+forces a re-run if the server's IP changes. `generate-certs.sh` also checks for an
+existing `ca.key` before generating anything, so even a manual `terraform taint
+null_resource.cert_bootstrap` can't silently replace a CA that's already signed working
+certificates.
+
 ## Verifying a deployment
 
 ```bash

@@ -121,3 +121,55 @@ module "ssm" {
   ssm_path_prefix = var.ssm_path_prefix
   api_endpoint    = module.server.private_ip
 }
+
+# Phase 2: the apiserver cert's SAN list can't be static — its IP is assigned at apply
+# time — so the one value Terraform knows that upstream's ca.conf can't is substituted
+# in here, and nowhere else in the file (D7).
+locals {
+  ca_conf_rendered = templatefile("${path.module}/scripts/ca.conf.template", {
+    service_cluster_ip = cidrhost(var.service_cidr, 1)
+    server_private_ip  = module.server.private_ip
+  })
+}
+
+# Generates the CA and six control-plane certs on the jumpbox itself, over SSH, so the
+# CA private key is born there and never touches the machine running `terraform apply`
+# (D4). A null_resource rather than provisioners on module.jumpbox directly (D5): a
+# failed run can be retried with a plain re-apply instead of recreating the instance.
+resource "null_resource" "cert_bootstrap" {
+  # Only re-runs if the server is recreated and gets a new IP — the one input to
+  # ca.conf's SAN block that could go stale. A CA already on the jumpbox is preserved
+  # by generate-certs.sh's own ca.key check regardless (D6).
+  triggers = {
+    server_ip = module.server.private_ip
+  }
+
+  connection {
+    type        = "ssh"
+    host        = module.jumpbox.public_ip
+    user        = "admin"
+    private_key = tls_private_key.ssh.private_key_pem
+    timeout     = "5m"
+  }
+
+  provisioner "file" {
+    content     = local.ca_conf_rendered
+    destination = "/home/admin/ca.conf"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/generate-certs.sh"
+    destination = "/home/admin/generate-certs.sh"
+  }
+
+  # awscli is installed here because Debian AMIs don't ship it (Phase 1 handoff); openssl
+  # does ship with the base image.
+  provisioner "remote-exec" {
+    inline = [
+      "chmod +x /home/admin/generate-certs.sh",
+      "sudo apt-get update -qq",
+      "sudo apt-get install -y -qq awscli",
+      "REGION=${var.region} SERVER_IP=${module.server.private_ip} SSM_PARAM_NAME=${module.ssm.parameter_names.ca_crt} /home/admin/generate-certs.sh",
+    ]
+  }
+}
