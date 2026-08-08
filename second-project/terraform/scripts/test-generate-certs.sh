@@ -1,33 +1,16 @@
 #!/usr/bin/env bash
-# Persisted, re-runnable coverage for generate-certs.sh. This replaces the ephemeral,
-# run-and-discard local proof from Task 1 (see
-# .superpowers/sdd/2026-08-08-kthw-phase2-pki-bootstrap/task-1-report.md) with a
-# committed test, using the same technique: a scratch $HOME, a stub `aws` on PATH
-# that logs calls and exits 0, and a ca.conf rendered via `terraform console`.
-#
-# Three checks, each must pass for this script to exit 0:
-#   1. First run: full pipeline succeeds, all 7 cert files exist.
-#   2. Second run against the SAME scratch $HOME (certs/ not wiped between runs)
-#      preserves the existing CA (D6) — this is the coverage the final review
-#      found missing. Asserts the "already exists" skip message appears and
-#      ca.crt's sha256 is byte-identical before and after.
-#   3. A corrupted ca.conf (bad kube-proxy O= field) in a FRESH scratch dir is
-#      rejected: exit 1 and the expected FAIL: message.
-#
-# Does not touch real AWS. Does not require terraform.tfvars (every root variable
-# has a default).
-
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TERRAFORM_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 GENERATE_CERTS="${SCRIPT_DIR}/generate-certs.sh"
 
-CERT_NAMES=(ca admin kube-proxy kube-scheduler kube-controller-manager kube-api-server service-accounts)
+CERT_NAMES=(ca admin kube-proxy kube-scheduler kube-controller-manager kube-api-server service-accounts node-0 node-1)
 
 REGION="eu-north-1"
 SERVER_IP="10.240.1.99"
 SSM_PARAM_NAME="/kthw/ca.crt"
+NODE_IPS="node-0=10.240.1.11,node-1=10.240.1.12"
 
 CLEANUP_DIRS=()
 cleanup() {
@@ -45,32 +28,26 @@ note_fail() {
   FAILURES=$((FAILURES + 1))
 }
 
-# A stub `aws` that logs every invocation and exits 0 unconditionally. This makes
-# `aws sts get-caller-identity` succeed on the first try, so generate-certs.sh's
-# credential-wait retry loop breaks immediately instead of spinning for up to a
-# minute, and makes `aws ssm put-parameter` a no-op we can inspect via the log.
-make_stub_aws() {
+make_stub_remote_tools() {
   local bin_dir="$1"
   local log_file="$2"
   mkdir -p "${bin_dir}"
-  cat >"${bin_dir}/aws" <<STUB
+  for tool in aws ssh scp; do
+    cat >"${bin_dir}/${tool}" <<STUB
 #!/usr/bin/env bash
-echo "aws \$*" >>"${log_file}"
+echo "${tool} \$*" >>"${log_file}"
 exit 0
 STUB
-  chmod +x "${bin_dir}/aws"
+    chmod +x "${bin_dir}/${tool}"
+  done
 }
 
-# Renders ca.conf.template the same way Terraform's templatefile() call in main.tf
-# does, but via \`terraform console\` against dummy values, exactly as Task 1's
-# local proof did. terraform console wraps multi-line string results in a
-# <<EOT ... EOT heredoc marker, so those first/last lines are stripped.
 render_ca_conf() {
   local dest="$1"
   local server_ip="$2"
   (
     cd "${TERRAFORM_DIR}" || exit 1
-    echo "templatefile(\"scripts/ca.conf.template\", { service_cluster_ip = \"10.32.0.1\", server_private_ip = \"${server_ip}\" })" \
+    echo "templatefile(\"scripts/ca.conf.template\", { service_cluster_ip = \"10.32.0.1\", server_private_ip = \"${server_ip}\", worker_names = [\"node-0\", \"node-1\"] })" \
       | terraform console
   ) | sed '1d;$d' >"${dest}"
 }
@@ -87,18 +64,18 @@ all_cert_files_exist() {
 }
 
 echo "=================================================================="
-echo "Check 1: first run succeeds and produces all 7 cert files"
+echo "Check 1: first run succeeds and produces all cert files"
 echo "=================================================================="
 
 SCRATCH1="$(mktemp -d)"
 CLEANUP_DIRS+=("${SCRATCH1}")
 BIN1="${SCRATCH1}/bin"
-LOG1="${SCRATCH1}/aws-calls.log"
-make_stub_aws "${BIN1}" "${LOG1}"
+LOG1="${SCRATCH1}/calls.log"
+make_stub_remote_tools "${BIN1}" "${LOG1}"
 render_ca_conf "${SCRATCH1}/ca.conf" "${SERVER_IP}"
 
 RUN1_OUTPUT="$(HOME="${SCRATCH1}" PATH="${BIN1}:${PATH}" \
-  REGION="${REGION}" SERVER_IP="${SERVER_IP}" SSM_PARAM_NAME="${SSM_PARAM_NAME}" \
+  REGION="${REGION}" SERVER_IP="${SERVER_IP}" SSM_PARAM_NAME="${SSM_PARAM_NAME}" NODE_IPS="${NODE_IPS}" \
   "${GENERATE_CERTS}" 2>&1)"
 RUN1_RC=$?
 echo "${RUN1_OUTPUT}"
@@ -110,9 +87,16 @@ else
 fi
 
 if all_cert_files_exist "${SCRATCH1}/certs"; then
-  note_pass "all 7 cert files exist after first run"
+  note_pass "all cert files exist after first run"
 else
-  note_fail "not all 7 cert files exist after first run"
+  note_fail "not all cert files exist after first run"
+fi
+
+if grep -q "scp .*node-0.crt admin@10.240.1.11:/tmp/kubelet.crt" "${LOG1}" \
+  && grep -q "scp .*node-1.crt admin@10.240.1.12:/tmp/kubelet.crt" "${LOG1}"; then
+  note_pass "node certs were distributed to both node IPs"
+else
+  note_fail "node cert distribution calls not found in the stub log"
 fi
 
 echo
@@ -126,7 +110,7 @@ if [[ -z "${CA_SHA_BEFORE}" ]]; then
 fi
 
 RUN2_OUTPUT="$(HOME="${SCRATCH1}" PATH="${BIN1}:${PATH}" \
-  REGION="${REGION}" SERVER_IP="${SERVER_IP}" SSM_PARAM_NAME="${SSM_PARAM_NAME}" \
+  REGION="${REGION}" SERVER_IP="${SERVER_IP}" SSM_PARAM_NAME="${SSM_PARAM_NAME}" NODE_IPS="${NODE_IPS}" \
   "${GENERATE_CERTS}" 2>&1)"
 RUN2_RC=$?
 echo "${RUN2_OUTPUT}"
@@ -158,18 +142,17 @@ echo "=================================================================="
 SCRATCH3="$(mktemp -d)"
 CLEANUP_DIRS+=("${SCRATCH3}")
 BIN3="${SCRATCH3}/bin"
-LOG3="${SCRATCH3}/aws-calls.log"
-make_stub_aws "${BIN3}" "${LOG3}"
+LOG3="${SCRATCH3}/calls.log"
+make_stub_remote_tools "${BIN3}" "${LOG3}"
 render_ca_conf "${SCRATCH3}/ca.conf" "${SERVER_IP}"
 
-# Corrupt kube-proxy's O= identity field, same technique as Task 1's negative test.
 sed -i 's/^O  = system:node-proxier$/O  = system:wrong-proxier/' "${SCRATCH3}/ca.conf"
 if ! grep -q 'O  = system:wrong-proxier' "${SCRATCH3}/ca.conf"; then
   note_fail "failed to corrupt ca.conf for the negative test (sed did not match)"
 fi
 
 RUN3_OUTPUT="$(HOME="${SCRATCH3}" PATH="${BIN3}:${PATH}" \
-  REGION="${REGION}" SERVER_IP="${SERVER_IP}" SSM_PARAM_NAME="${SSM_PARAM_NAME}" \
+  REGION="${REGION}" SERVER_IP="${SERVER_IP}" SSM_PARAM_NAME="${SSM_PARAM_NAME}" NODE_IPS="${NODE_IPS}" \
   "${GENERATE_CERTS}" 2>&1)"
 RUN3_RC=$?
 echo "${RUN3_OUTPUT}"
