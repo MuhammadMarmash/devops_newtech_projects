@@ -22,13 +22,6 @@ req_extensions     = default_req_extensions
 CN = admin
 O  = system:masters
 
-# Service Accounts
-#
-# The Kubernetes Controller Manager leverages a key pair to generate
-# and sign service account tokens as described in the
-# [managing service accounts](https://kubernetes.io/docs/admin/service-accounts-admin/)
-# documentation.
-
 [service-accounts]
 distinguished_name = service-accounts_distinguished_name
 prompt             = no
@@ -37,13 +30,29 @@ req_extensions     = default_req_extensions
 [service-accounts_distinguished_name]
 CN = service-accounts
 
-# Worker Nodes
-#
-# Not used in this project (D1) — no per-node certificates are signed. Kubelet TLS
-# bootstrapping in Phase 4 generates node keys locally instead. Upstream's ca.conf has
-# node-0/node-1 sections here; this project omits them rather than keeping unused config.
+%{ for name in worker_names ~}
+[${name}]
+distinguished_name = ${name}_distinguished_name
+prompt             = no
+req_extensions     = ${name}_req_extensions
 
-# Kube Proxy Section
+[${name}_req_extensions]
+basicConstraints     = CA:FALSE
+extendedKeyUsage     = clientAuth, serverAuth
+keyUsage             = critical, digitalSignature, keyEncipherment
+nsCertType           = client
+nsComment            = "${name} Certificate"
+subjectAltName       = DNS:${name}, IP:127.0.0.1
+subjectKeyIdentifier = hash
+
+[${name}_distinguished_name]
+CN = system:node:${name}
+O  = system:nodes
+C  = US
+ST = Washington
+L  = Seattle
+
+%{ endfor ~}
 [kube-proxy]
 distinguished_name = kube-proxy_distinguished_name
 prompt             = no
@@ -66,7 +75,6 @@ ST = Washington
 L  = Seattle
 
 
-# Controller Manager
 [kube-controller-manager]
 distinguished_name = kube-controller-manager_distinguished_name
 prompt             = no
@@ -89,7 +97,6 @@ ST = Washington
 L  = Seattle
 
 
-# Scheduler
 [kube-scheduler]
 distinguished_name = kube-scheduler_distinguished_name
 prompt             = no
@@ -111,13 +118,6 @@ C  = US
 ST = Washington
 L  = Seattle
 
-
-# API Server
-#
-# The Kubernetes API server is automatically assigned the `kubernetes`
-# internal dns name, which will be linked to the first IP address (`10.32.0.1`)
-# from the address range (`10.32.0.0/24`) reserved for internal cluster
-# services.
 
 [kube-api-server]
 distinguished_name = kube-api-server_distinguished_name
