@@ -3,17 +3,14 @@ data "aws_region" "current" {}
 data "aws_partition" "current" {}
 
 locals {
-  # A path wildcard, not enumerated ARNs. Phase 3's orchestrator mints the bootstrap
-  # token into SSM at runtime, so Terraform can never know that parameter's ARN. A policy
-  # listing only Terraform-known ARNs would break Phase 4's worker bootstrap.
   ssm_parameter_arn = join("", [
     "arn:", data.aws_partition.current.partition,
-    ":ssm:", data.aws_region.current.name,
+    ":ssm:", data.aws_region.current.region,
     ":", data.aws_caller_identity.current.account_id,
     ":parameter", var.ssm_path_prefix, "/*",
   ])
 
-  kms_via_ssm = "ssm.${data.aws_region.current.name}.amazonaws.com"
+  kms_via_ssm = "ssm.${data.aws_region.current.region}.amazonaws.com"
 }
 
 data "aws_iam_policy_document" "ec2_assume" {
