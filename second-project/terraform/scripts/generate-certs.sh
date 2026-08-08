@@ -101,6 +101,7 @@ aws ssm put-parameter \
   --region "${REGION}" \
   --name "${SSM_PARAM_NAME}" \
   --type String \
+  --description "Cluster CA certificate; written by the Phase 2 orchestrator" \
   --overwrite \
   --value "$(cat ca.crt)"
 

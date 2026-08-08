@@ -144,6 +144,14 @@ resource "null_resource" "cert_bootstrap" {
     server_ip = module.server.private_ip
   }
 
+  # module.jumpbox's own attribute references (subnet, SG id) don't reach the separate
+  # SSH ingress/egress rule resources in modules/security or the IGW route resources in
+  # modules/network — those modules only export IDs, not the rule/route resources
+  # themselves. Without this, Terraform can start the SSH provisioner before the SSH rule
+  # or the internet route actually exist, same failure mode module.workers guards against
+  # above.
+  depends_on = [module.network, module.security]
+
   connection {
     type        = "ssh"
     host        = module.jumpbox.public_ip
@@ -166,6 +174,8 @@ resource "null_resource" "cert_bootstrap" {
   # does ship with the base image.
   provisioner "remote-exec" {
     inline = [
+      "set -e",
+      "cloud-init status --wait",
       "chmod +x /home/admin/generate-certs.sh",
       "sudo apt-get update -qq",
       "sudo apt-get install -y -qq awscli",
