@@ -126,12 +126,16 @@ locals {
   ca_conf_rendered = templatefile("${path.module}/scripts/ca.conf.template", {
     service_cluster_ip = cidrhost(var.service_cidr, 1)
     server_private_ip  = module.server.private_ip
+    worker_names       = sort(keys(module.workers))
   })
+
+  node_ips_csv = join(",", [for name, w in module.workers : "${name}=${w.private_ip}"])
 }
 
 resource "null_resource" "cert_bootstrap" {
   triggers = {
-    server_ip = module.server.private_ip
+    server_ip  = module.server.private_ip
+    worker_ips = local.node_ips_csv
   }
 
   depends_on = [module.network, module.security]
@@ -167,7 +171,7 @@ resource "null_resource" "cert_bootstrap" {
       "chmod +x /home/admin/generate-certs.sh",
       "sudo apt-get update -qq",
       "sudo apt-get install -y -qq awscli",
-      "REGION=${var.region} SERVER_IP=${module.server.private_ip} SSM_PARAM_NAME=${module.ssm.parameter_names.ca_crt} /home/admin/generate-certs.sh",
+      "REGION=${var.region} SERVER_IP=${module.server.private_ip} SSM_PARAM_NAME=${module.ssm.parameter_names.ca_crt} NODE_IPS=${local.node_ips_csv} /home/admin/generate-certs.sh",
     ]
   }
 }
