@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# Provisions the KTHW CA and control-plane certificates, following the exact openssl
-# commands from github.com/kelseyhightower/kubernetes-the-hard-way's
-# docs/04-certificate-authority.md. Runs on the jumpbox via a Terraform remote-exec
-# provisioner (see terraform/main.tf, null_resource.cert_bootstrap).
 set -euo pipefail
 
 : "${REGION:?REGION must be set}"
 : "${SERVER_IP:?SERVER_IP must be set}"
 : "${SSM_PARAM_NAME:?SSM_PARAM_NAME must be set}"
+: "${NODE_IPS:?NODE_IPS must be set}"
 
 cd "$HOME"
 mkdir -p certs
 cd certs
+
+NODE_NAMES=()
+declare -A NODE_IP
+IFS=',' read -ra PAIRS <<< "${NODE_IPS}"
+for pair in "${PAIRS[@]}"; do
+  name="${pair%%=*}"
+  ip="${pair#*=}"
+  NODE_NAMES+=("${name}")
+  NODE_IP["${name}"]="${ip}"
+done
 
 if [[ -f ca.key ]]; then
   echo "ca.key already exists on this jumpbox — skipping CA generation to avoid invalidating certs already signed by it"
@@ -24,7 +31,7 @@ else
     -out ca.crt
 fi
 
-CERTS=(admin kube-proxy kube-scheduler kube-controller-manager kube-api-server service-accounts)
+CERTS=(admin kube-proxy kube-scheduler kube-controller-manager kube-api-server service-accounts "${NODE_NAMES[@]}")
 
 for name in "${CERTS[@]}"; do
   echo "Signing ${name}"
@@ -60,6 +67,11 @@ declare -A EXPECT_O=(
   [kube-scheduler]="system:system:kube-scheduler"
   [kube-controller-manager]="system:kube-controller-manager"
 )
+
+for name in "${NODE_NAMES[@]}"; do
+  EXPECT_CN["${name}"]="system:node:${name}"
+  EXPECT_O["${name}"]="system:nodes"
+done
 
 echo "Verifying CN/O fields"
 for name in "${CERTS[@]}"; do
