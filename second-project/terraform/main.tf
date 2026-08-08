@@ -122,9 +122,6 @@ module "ssm" {
   api_endpoint    = module.server.private_ip
 }
 
-# Phase 2: the apiserver cert's SAN list can't be static — its IP is assigned at apply
-# time — so the one value Terraform knows that upstream's ca.conf can't is substituted
-# in here, and nowhere else in the file (D7).
 locals {
   ca_conf_rendered = templatefile("${path.module}/scripts/ca.conf.template", {
     service_cluster_ip = cidrhost(var.service_cidr, 1)
@@ -132,24 +129,11 @@ locals {
   })
 }
 
-# Generates the CA and six control-plane certs on the jumpbox itself, over SSH, so the
-# CA private key is born there and never touches the machine running `terraform apply`
-# (D4). A null_resource rather than provisioners on module.jumpbox directly (D5): a
-# failed run can be retried with a plain re-apply instead of recreating the instance.
 resource "null_resource" "cert_bootstrap" {
-  # Only re-runs if the server is recreated and gets a new IP — the one input to
-  # ca.conf's SAN block that could go stale. A CA already on the jumpbox is preserved
-  # by generate-certs.sh's own ca.key check regardless (D6).
   triggers = {
     server_ip = module.server.private_ip
   }
 
-  # module.jumpbox's own attribute references (subnet, SG id) don't reach the separate
-  # SSH ingress/egress rule resources in modules/security or the IGW route resources in
-  # modules/network — those modules only export IDs, not the rule/route resources
-  # themselves. Without this, Terraform can start the SSH provisioner before the SSH rule
-  # or the internet route actually exist, same failure mode module.workers guards against
-  # above.
   depends_on = [module.network, module.security]
 
   connection {
@@ -170,12 +154,16 @@ resource "null_resource" "cert_bootstrap" {
     destination = "/home/admin/generate-certs.sh"
   }
 
-  # awscli is installed here because Debian AMIs don't ship it (Phase 1 handoff); openssl
-  # does ship with the base image.
+  provisioner "file" {
+    content     = tls_private_key.ssh.private_key_pem
+    destination = "/home/admin/kthw.pem"
+  }
+
   provisioner "remote-exec" {
     inline = [
       "set -e",
       "cloud-init status --wait",
+      "chmod 600 /home/admin/kthw.pem",
       "chmod +x /home/admin/generate-certs.sh",
       "sudo apt-get update -qq",
       "sudo apt-get install -y -qq awscli",
