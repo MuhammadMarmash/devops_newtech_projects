@@ -20,6 +20,12 @@ for pair in "${PAIRS[@]}"; do
   NODE_IP["${name}"]="${ip}"
 done
 
+if [[ ! -x /usr/local/bin/kubectl ]]; then
+  curl -fsSL -o /tmp/kubectl https://dl.k8s.io/v1.32.3/bin/linux/amd64/kubectl
+  chmod +x /tmp/kubectl
+  sudo mv /tmp/kubectl /usr/local/bin/kubectl
+fi
+
 if [[ -f ca.key ]]; then
   echo "ca.key already exists on this jumpbox — skipping CA generation to avoid invalidating certs already signed by it"
 else
@@ -117,15 +123,54 @@ aws ssm put-parameter \
   --overwrite \
   --value "$(cat ca.crt)"
 
-echo "Distributing node certificates"
+echo "Building kubeconfigs"
+
+build_kubeconfig() {
+  local user="$1" cert="$2" key="$3" out="$4"
+  kubectl config set-cluster kubernetes-the-hard-way \
+    --certificate-authority=ca.crt \
+    --embed-certs=true \
+    --server="https://${SERVER_IP}:6443" \
+    --kubeconfig="${out}"
+  kubectl config set-credentials "${user}" \
+    --client-certificate="${cert}" \
+    --client-key="${key}" \
+    --embed-certs=true \
+    --kubeconfig="${out}"
+  kubectl config set-context default \
+    --cluster=kubernetes-the-hard-way \
+    --user="${user}" \
+    --kubeconfig="${out}"
+  kubectl config use-context default --kubeconfig="${out}"
+}
+
+for name in "${NODE_NAMES[@]}"; do
+  build_kubeconfig "system:node:${name}" "${name}.crt" "${name}.key" "${name}.kubeconfig"
+done
+build_kubeconfig system:kube-proxy kube-proxy.crt kube-proxy.key kube-proxy.kubeconfig
+build_kubeconfig system:kube-controller-manager kube-controller-manager.crt kube-controller-manager.key kube-controller-manager.kubeconfig
+build_kubeconfig system:kube-scheduler kube-scheduler.crt kube-scheduler.key kube-scheduler.kubeconfig
+build_kubeconfig admin admin.crt admin.key admin.kubeconfig
+
+echo "Distributing node certificates and kubeconfigs"
 for name in "${NODE_NAMES[@]}"; do
   ip="${NODE_IP[${name}]}"
-  ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${ip}" "sudo mkdir -p /var/lib/kubelet"
+  ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${ip}" "sudo mkdir -p /var/lib/kubelet /var/lib/kube-proxy"
   scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no ca.crt "admin@${ip}:/tmp/ca.crt"
   scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "${name}.crt" "admin@${ip}:/tmp/kubelet.crt"
   scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "${name}.key" "admin@${ip}:/tmp/kubelet.key"
+  scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "${name}.kubeconfig" "admin@${ip}:/tmp/kubelet-kubeconfig"
+  scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no kube-proxy.kubeconfig "admin@${ip}:/tmp/kube-proxy-kubeconfig"
   ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${ip}" \
-    "sudo mv /tmp/ca.crt /tmp/kubelet.crt /tmp/kubelet.key /var/lib/kubelet/ && sudo chown root:root /var/lib/kubelet/ca.crt /var/lib/kubelet/kubelet.crt /var/lib/kubelet/kubelet.key"
+    "sudo mv /tmp/ca.crt /tmp/kubelet.crt /tmp/kubelet.key /var/lib/kubelet/ && \
+     sudo mv /tmp/kubelet-kubeconfig /var/lib/kubelet/kubeconfig && \
+     sudo mv /tmp/kube-proxy-kubeconfig /var/lib/kube-proxy/kubeconfig && \
+     sudo chown root:root /var/lib/kubelet/ca.crt /var/lib/kubelet/kubelet.crt /var/lib/kubelet/kubelet.key /var/lib/kubelet/kubeconfig /var/lib/kube-proxy/kubeconfig"
 done
+
+echo "Distributing server-side kubeconfigs"
+scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no \
+  admin.kubeconfig kube-controller-manager.kubeconfig kube-scheduler.kubeconfig \
+  "admin@${SERVER_IP}:~/"
 
 echo "Phase 2 cert bootstrap complete"

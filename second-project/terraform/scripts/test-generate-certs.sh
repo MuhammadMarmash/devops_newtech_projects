@@ -72,6 +72,8 @@ CLEANUP_DIRS+=("${SCRATCH1}")
 BIN1="${SCRATCH1}/bin"
 LOG1="${SCRATCH1}/calls.log"
 make_stub_remote_tools "${BIN1}" "${LOG1}"
+curl -fsSL -o "${BIN1}/kubectl" https://dl.k8s.io/v1.32.3/bin/linux/amd64/kubectl
+chmod +x "${BIN1}/kubectl"
 render_ca_conf "${SCRATCH1}/ca.conf" "${SERVER_IP}"
 
 RUN1_OUTPUT="$(HOME="${SCRATCH1}" PATH="${BIN1}:${PATH}" \
@@ -90,6 +92,24 @@ if all_cert_files_exist "${SCRATCH1}/certs"; then
   note_pass "all cert files exist after first run"
 else
   note_fail "not all cert files exist after first run"
+fi
+
+if [[ -f "${SCRATCH1}/certs/admin.kubeconfig" && -f "${SCRATCH1}/certs/kube-proxy.kubeconfig" && -f "${SCRATCH1}/certs/node-0.kubeconfig" ]]; then
+  note_pass "kubeconfigs were built for admin, kube-proxy, and node-0"
+else
+  note_fail "expected kubeconfig files are missing"
+fi
+
+if grep -q "https://${SERVER_IP}:6443" "${SCRATCH1}/certs/admin.kubeconfig"; then
+  note_pass "admin.kubeconfig points at the correct server address"
+else
+  note_fail "admin.kubeconfig does not reference https://${SERVER_IP}:6443"
+fi
+
+if grep -q "scp .*admin.kubeconfig.*admin@${SERVER_IP}" "${LOG1}"; then
+  note_pass "server-side kubeconfigs were distributed to the server IP"
+else
+  note_fail "server-side kubeconfig distribution not found in the stub log"
 fi
 
 if grep -q "scp .*node-0.crt admin@10.240.1.11:/tmp/kubelet.crt" "${LOG1}" \
@@ -144,6 +164,8 @@ CLEANUP_DIRS+=("${SCRATCH3}")
 BIN3="${SCRATCH3}/bin"
 LOG3="${SCRATCH3}/calls.log"
 make_stub_remote_tools "${BIN3}" "${LOG3}"
+curl -fsSL -o "${BIN3}/kubectl" https://dl.k8s.io/v1.32.3/bin/linux/amd64/kubectl
+chmod +x "${BIN3}/kubectl"
 render_ca_conf "${SCRATCH3}/ca.conf" "${SERVER_IP}"
 
 sed -i 's/^O  = system:node-proxier$/O  = system:wrong-proxier/' "${SCRATCH3}/ca.conf"
