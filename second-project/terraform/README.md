@@ -123,12 +123,16 @@ pair plus `ca.crt` into `/var/lib/kubelet/`. This matches upstream KTHW's own me
 rather than kubelet TLS bootstrapping — this project is for learning the manual mechanism,
 not production-grade automation.
 
-**Why the jumpbox, not your laptop.** The CA private key must exist in exactly one
-place. Running the script locally would put it on the operator's machine first; running
-it over `remote-exec` means it is born on the jumpbox and never leaves. The operator's SSH
-private key does get copied to the jumpbox (`/home/admin/kthw.pem`) so it can reach the
-workers in turn — that key isn't as sensitive as the CA key, and copying it matches what
-this project's own testing steps already do by hand.
+**Why the jumpbox, not your laptop.** Running the script locally would put the CA private
+key on the operator's machine first; running it over `remote-exec` means it is born on the
+jumpbox and never leaves. The operator's SSH private key does get copied to the jumpbox
+(`/home/admin/kthw.pem`) so it can reach the workers in turn — that key isn't as sensitive
+as the CA key, and copying it matches what this project's own testing steps already do by
+hand.
+
+**Where the CA private key lives.** Born on the jumpbox, and — starting in Phase 3 —
+also copied to `server`, because `kube-controller-manager`'s built-in CSR-signing
+controller needs it locally. Never copied anywhere else, and never leaves AWS.
 
 **Why `openssl`, not a Python library.** This project's goal is understanding what
 Kubernetes The Hard Way does, not building the most testable toolchain. `ca.conf.template`
@@ -142,6 +146,25 @@ forces a re-run if the server's IP changes. `generate-certs.sh` also checks for 
 existing `ca.key` before generating anything, so even a manual `terraform taint
 null_resource.cert_bootstrap` can't silently replace a CA that's already signed working
 certificates.
+
+## Phase 3 — control-plane bootstrap
+
+`null_resource.control_plane_bootstrap` brings up etcd, kube-apiserver,
+kube-controller-manager, and kube-scheduler on `server`, automatically, right after
+Phase 2's certs and kubeconfigs land. Binaries and configs are the exact pinned set from
+upstream KTHW's `downloads-amd64.txt` (Kubernetes v1.32.3, etcd v3.6.0-rc.3 — a release
+candidate, upstream's own pin).
+
+**Addressing.** Every place upstream hardcodes `server.kubernetes.local`, this project
+substitutes the real private IP — kubeconfigs' `--server`, the apiserver's
+`--service-account-issuer`. No DNS exists in this project and none is planned.
+
+**Idempotency.** Same two-layer pattern as Phase 2: Terraform's `triggers` only re-runs
+the provisioner if `server`'s IP changes, and the script itself checks whether
+`kube-apiserver` is already active before doing any work. The encryption key protecting
+Kubernetes Secrets at rest has its own, separate persistence guard — regenerating it would
+make every already-encrypted Secret permanently unreadable, a failure mode worse than a
+merely-skipped step.
 
 ## Verifying a deployment
 

@@ -130,6 +130,15 @@ locals {
   })
 
   node_ips_csv = join(",", [for name, w in module.workers : "${name}=${w.private_ip}"])
+
+  kube_apiserver_service_rendered = templatefile("${path.module}/scripts/kube-apiserver.service.template", {
+    service_account_issuer = "https://${module.server.private_ip}:6443"
+  })
+
+  kube_controller_manager_service_rendered = templatefile("${path.module}/scripts/kube-controller-manager.service.template", {
+    pod_cidr     = var.pod_cidr
+    service_cidr = var.service_cidr
+  })
 }
 
 resource "null_resource" "cert_bootstrap" {
@@ -172,6 +181,76 @@ resource "null_resource" "cert_bootstrap" {
       "sudo apt-get update -qq",
       "sudo apt-get install -y -qq awscli",
       "REGION=${var.region} SERVER_IP=${module.server.private_ip} SSM_PARAM_NAME=${module.ssm.parameter_names.ca_crt} NODE_IPS=${local.node_ips_csv} /home/admin/generate-certs.sh",
+    ]
+  }
+}
+
+resource "null_resource" "control_plane_bootstrap" {
+  triggers = {
+    server_ip = module.server.private_ip
+  }
+
+  depends_on = [null_resource.cert_bootstrap]
+
+  connection {
+    type        = "ssh"
+    host        = module.jumpbox.public_ip
+    user        = "admin"
+    private_key = tls_private_key.ssh.private_key_pem
+    timeout     = "5m"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/downloads-amd64.txt"
+    destination = "/home/admin/downloads-amd64.txt"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/kube-scheduler.yaml"
+    destination = "/home/admin/kube-scheduler.yaml"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/kube-apiserver-to-kubelet.yaml"
+    destination = "/home/admin/kube-apiserver-to-kubelet.yaml"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/etcd.service"
+    destination = "/home/admin/etcd.service"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/kube-scheduler.service"
+    destination = "/home/admin/kube-scheduler.service"
+  }
+
+  provisioner "file" {
+    content     = local.kube_apiserver_service_rendered
+    destination = "/home/admin/kube-apiserver.service"
+  }
+
+  provisioner "file" {
+    content     = local.kube_controller_manager_service_rendered
+    destination = "/home/admin/kube-controller-manager.service"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/encryption-config.yaml.template"
+    destination = "/home/admin/encryption-config.yaml.template"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/bootstrap-control-plane.sh"
+    destination = "/home/admin/bootstrap-control-plane.sh"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "set -e",
+      "sudo apt-get install -y -qq gettext-base",
+      "chmod +x /home/admin/bootstrap-control-plane.sh",
+      "SERVER_IP=${module.server.private_ip} /home/admin/bootstrap-control-plane.sh",
     ]
   }
 }
