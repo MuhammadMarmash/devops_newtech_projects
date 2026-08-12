@@ -133,6 +133,7 @@ locals {
 
   kube_apiserver_service_rendered = templatefile("${path.module}/scripts/kube-apiserver.service.template", {
     service_account_issuer = "https://${module.server.private_ip}:6443"
+    service_cidr           = var.service_cidr
   })
 
   kube_controller_manager_service_rendered = templatefile("${path.module}/scripts/kube-controller-manager.service.template", {

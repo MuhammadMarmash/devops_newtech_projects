@@ -23,6 +23,7 @@ ExecStart=/usr/local/bin/kube-apiserver \
   --service-account-key-file=/var/lib/kubernetes/service-accounts.crt \
   --service-account-signing-key-file=/var/lib/kubernetes/service-accounts.key \
   --service-account-issuer=${service_account_issuer} \
+  --service-cluster-ip-range=${service_cidr} \
   --service-node-port-range=30000-32767 \
   --tls-cert-file=/var/lib/kubernetes/kube-api-server.crt \
   --tls-private-key-file=/var/lib/kubernetes/kube-api-server.key \
