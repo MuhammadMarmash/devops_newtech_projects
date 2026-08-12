@@ -36,3 +36,14 @@ resource "aws_ssm_parameter" "bootstrap_token" {
     ignore_changes = [value]
   }
 }
+
+resource "aws_ssm_parameter" "encryption_key" {
+  name        = "${var.ssm_path_prefix}/encryption-key"
+  description = "Kubernetes Secrets encryption key; written by the Phase 3 orchestrator"
+  type        = "SecureString"
+  value       = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}

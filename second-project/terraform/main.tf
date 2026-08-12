@@ -250,7 +250,7 @@ resource "null_resource" "control_plane_bootstrap" {
       "set -e",
       "sudo apt-get install -y -qq gettext-base",
       "chmod +x /home/admin/bootstrap-control-plane.sh",
-      "SERVER_IP=${module.server.private_ip} /home/admin/bootstrap-control-plane.sh",
+      "REGION=${var.region} SERVER_IP=${module.server.private_ip} ENCRYPTION_KEY_SSM_PARAM=${module.ssm.parameter_names.encryption_key} /home/admin/bootstrap-control-plane.sh",
     ]
   }
 }
