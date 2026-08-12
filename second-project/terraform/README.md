@@ -182,6 +182,36 @@ design decision), so nodes registering as `NotReady` after this phase is expecte
 bug. Certs and kubeconfigs need no attention here — Phase 2 already delivered them to
 `/var/lib/kubelet/` and `/var/lib/kube-proxy/` on every worker.
 
+## Phase 5 — dynamic pod networking
+
+The last phase. `null_resource.pod_networking` makes pods on different workers reach
+each other, with no hand-assigned subnet — the one piece of upstream KTHW's tutorial
+this project's own charter singled out as not surviving automation (upstream hand-enters
+a static `ip route add` per node pair from a hand-assigned `SUBNET` column).
+
+**How it actually works.** `kube-controller-manager` (Phase 3) now runs with
+`--allocate-node-cidrs=true --node-cidr-mask-size=24`, so each node gets a `/24` out of
+`var.pod_cidr` automatically once it registers — no `machines.txt`-style hand-assignment.
+A script polls each node's `.spec.podCIDR` until it's populated, renders that node's
+`10-bridge.conf` (upstream's own file, one `sed` substitution — the CNI config Phase 4
+deliberately didn't install), and creates one AWS VPC route per worker: that worker's pod
+subnet, routed to that worker's own network interface. Every private-subnet instance
+already shares this route table, so pod-to-pod traffic between any two workers flows
+through AWS's own VPC routing — no per-host route table to maintain, and no manual step
+that breaks when a worker is added or removed.
+
+**Why AWS routes, not upstream's host-level `ip route add`.** Phase 1 exported
+`private_route_table_id` and every worker's `primary_network_interface_id` specifically
+for this moment (its own code comments say so). One route table entry per worker,
+programmed once, replaces re-entering host routes on every machine for every node
+change — the same underlying mechanism (a router needs to know which next-hop owns which
+subnet), expressed at the layer this project's infrastructure already lives in.
+
+**This is also where Phase 1's one unproven assumption finally gets tested.** The
+cluster security group's pod-CIDR ingress rule was flagged, back in Phase 1, as reasoned
+from AWS's documented behavior but never observed directly. A real pod-to-pod
+connectivity test is the first time that rule's actual behavior is confirmed.
+
 ## Verifying a deployment
 
 ```bash

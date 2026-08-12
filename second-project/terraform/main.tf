@@ -132,6 +132,8 @@ locals {
 
   node_ips_csv = join(",", [for name, w in module.workers : "${name}=${w.private_ip}"])
 
+  worker_node_data_csv = join(",", [for name, w in module.workers : "${name}=${w.private_ip}=${w.primary_network_interface_id}"])
+
   kube_apiserver_service_rendered = templatefile("${path.module}/scripts/kube-apiserver.service.template", {
     service_account_issuer = "https://${module.server.private_ip}:6443"
     service_cidr           = var.service_cidr
@@ -352,6 +354,40 @@ resource "null_resource" "worker_bootstrap" {
     inline = [
       "set -e",
       "WORKER_IP=${each.value.private_ip} /home/admin/bootstrap-worker.sh",
+    ]
+  }
+}
+
+resource "null_resource" "pod_networking" {
+  triggers = {
+    worker_node_data = local.worker_node_data_csv
+  }
+
+  depends_on = [null_resource.worker_bootstrap]
+
+  connection {
+    type        = "ssh"
+    host        = module.jumpbox.public_ip
+    user        = "admin"
+    private_key = tls_private_key.ssh.private_key_pem
+    timeout     = "5m"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/10-bridge.conf.template"
+    destination = "/home/admin/10-bridge.conf.template"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/configure-pod-networking.sh"
+    destination = "/home/admin/configure-pod-networking.sh"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "set -e",
+      "chmod +x /home/admin/configure-pod-networking.sh",
+      "REGION=${var.region} ROUTE_TABLE_ID=${module.network.private_route_table_id} NODE_DATA=${local.worker_node_data_csv} /home/admin/configure-pod-networking.sh",
     ]
   }
 }
