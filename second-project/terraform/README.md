@@ -166,6 +166,22 @@ Kubernetes Secrets at rest has its own, separate persistence guard — regenerat
 make every already-encrypted Secret permanently unreadable, a failure mode worse than a
 merely-skipped step.
 
+## Phase 4 — worker bootstrap
+
+Two more `null_resource`s bring up `containerd`, `kubelet`, and `kube-proxy` on every
+worker, right after Phase 3's control plane is running. `worker_binaries_prepared` runs
+once — it extracts the worker binaries Phase 3 already downloaded but didn't need
+(`kubelet`, `kube-proxy`, `containerd`, `runc`, `crictl`, the CNI plugins), and stages
+every config file onto the jumpbox. `worker_bootstrap` then runs once per worker, via
+Terraform's `for_each` — so a failed `node-3` retries independently of `node-0`/`node-1`.
+
+**No pod networking yet.** Only `99-loopback.conf` is installed into `/etc/cni/net.d/` —
+not the CNI bridge config upstream's tutorial hand-assigns a subnet to. This project
+deliberately defers pod-subnet assignment to Phase 5's dynamic allocation (Phase 1's own
+design decision), so nodes registering as `NotReady` after this phase is expected, not a
+bug. Certs and kubeconfigs need no attention here — Phase 2 already delivered them to
+`/var/lib/kubelet/` and `/var/lib/kube-proxy/` on every worker.
+
 ## Verifying a deployment
 
 ```bash

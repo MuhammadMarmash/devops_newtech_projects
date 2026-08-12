@@ -140,6 +140,10 @@ locals {
     pod_cidr     = var.pod_cidr
     service_cidr = var.service_cidr
   })
+
+  kube_proxy_service_rendered = templatefile("${path.module}/scripts/kube-proxy-config.yaml.template", {
+    pod_cidr = var.pod_cidr
+  })
 }
 
 resource "null_resource" "cert_bootstrap" {
@@ -252,6 +256,101 @@ resource "null_resource" "control_plane_bootstrap" {
       "sudo apt-get install -y -qq gettext-base",
       "chmod +x /home/admin/bootstrap-control-plane.sh",
       "REGION=${var.region} SERVER_IP=${module.server.private_ip} ENCRYPTION_KEY_SSM_PARAM=${module.ssm.parameter_names.encryption_key} /home/admin/bootstrap-control-plane.sh",
+    ]
+  }
+}
+
+resource "null_resource" "worker_binaries_prepared" {
+  triggers = {
+    server_ip = module.server.private_ip
+  }
+
+  depends_on = [null_resource.control_plane_bootstrap]
+
+  connection {
+    type        = "ssh"
+    host        = module.jumpbox.public_ip
+    user        = "admin"
+    private_key = tls_private_key.ssh.private_key_pem
+    timeout     = "5m"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/prepare-worker-binaries.sh"
+    destination = "/home/admin/prepare-worker-binaries.sh"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/99-loopback.conf"
+    destination = "/home/admin/99-loopback.conf"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/containerd-config.toml"
+    destination = "/home/admin/containerd-config.toml"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/kubelet-config.yaml"
+    destination = "/home/admin/kubelet-config.yaml"
+  }
+
+  provisioner "file" {
+    content     = local.kube_proxy_service_rendered
+    destination = "/home/admin/kube-proxy-config.yaml"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/containerd.service"
+    destination = "/home/admin/containerd.service"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/kubelet.service"
+    destination = "/home/admin/kubelet.service"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/kube-proxy.service"
+    destination = "/home/admin/kube-proxy.service"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/bootstrap-worker.sh"
+    destination = "/home/admin/bootstrap-worker.sh"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "set -e",
+      "chmod +x /home/admin/prepare-worker-binaries.sh",
+      "chmod +x /home/admin/bootstrap-worker.sh",
+      "/home/admin/prepare-worker-binaries.sh",
+    ]
+  }
+}
+
+resource "null_resource" "worker_bootstrap" {
+  for_each = module.workers
+
+  triggers = {
+    worker_ip = each.value.private_ip
+  }
+
+  depends_on = [null_resource.worker_binaries_prepared]
+
+  connection {
+    type        = "ssh"
+    host        = module.jumpbox.public_ip
+    user        = "admin"
+    private_key = tls_private_key.ssh.private_key_pem
+    timeout     = "5m"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "set -e",
+      "WORKER_IP=${each.value.private_ip} /home/admin/bootstrap-worker.sh",
     ]
   }
 }
