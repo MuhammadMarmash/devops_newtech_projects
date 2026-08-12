@@ -2,6 +2,8 @@
 set -euo pipefail
 
 : "${SERVER_IP:?SERVER_IP must be set}"
+: "${REGION:?REGION must be set}"
+: "${ENCRYPTION_KEY_SSM_PARAM:?ENCRYPTION_KEY_SSM_PARAM must be set}"
 
 cd "$HOME"
 
@@ -13,30 +15,35 @@ if [[ ! -f downloads/kube-apiserver ]]; then
   chmod +x downloads/kube-apiserver downloads/kube-controller-manager downloads/kube-scheduler downloads/kubectl downloads/etcd downloads/etcdctl
 fi
 
-if [[ -f encryption-key.b64 ]]; then
-  echo "encryption-key.b64 already exists on this jumpbox — reusing it, regenerating it would make every already-encrypted Secret unreadable"
-else
-  head -c 32 /dev/urandom | base64 >encryption-key.b64
+ENCRYPTION_KEY="$(aws ssm get-parameter --region "${REGION}" --name "${ENCRYPTION_KEY_SSM_PARAM}" --with-decryption --query Parameter.Value --output text 2>/dev/null || true)"
+if [[ -z "${ENCRYPTION_KEY}" || "${ENCRYPTION_KEY}" == "PLACEHOLDER" || "${ENCRYPTION_KEY}" == "None" ]]; then
+  ENCRYPTION_KEY="$(head -c 32 /dev/urandom | base64)"
+  aws ssm put-parameter \
+    --region "${REGION}" \
+    --name "${ENCRYPTION_KEY_SSM_PARAM}" \
+    --type SecureString \
+    --overwrite \
+    --value "${ENCRYPTION_KEY}"
 fi
+echo "${ENCRYPTION_KEY}" >encryption-key.b64
 ENCRYPTION_KEY="$(cat encryption-key.b64)" envsubst <encryption-config.yaml.template >encryption-config.yaml
 
 ALREADY_BOOTSTRAPPED="$(ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${SERVER_IP}" \
   'systemctl is-active --quiet kube-apiserver && echo yes || echo no')"
 
 if [[ "${ALREADY_BOOTSTRAPPED}" == "yes" ]]; then
-  echo "kube-apiserver is already active on server — skipping control plane bootstrap"
-  exit 0
-fi
+  echo "kube-apiserver is already active on server — skipping control plane install"
+else
+  scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no \
+    downloads/etcd downloads/etcdctl downloads/kube-apiserver downloads/kube-controller-manager downloads/kube-scheduler downloads/kubectl \
+    etcd.service kube-apiserver.service kube-controller-manager.service kube-scheduler.service \
+    kube-scheduler.yaml kube-apiserver-to-kubelet.yaml \
+    certs/ca.crt certs/ca.key certs/kube-api-server.crt certs/kube-api-server.key certs/service-accounts.crt certs/service-accounts.key \
+    certs/kube-controller-manager.kubeconfig certs/kube-scheduler.kubeconfig \
+    encryption-config.yaml \
+    "admin@${SERVER_IP}:~/"
 
-scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no \
-  downloads/etcd downloads/etcdctl downloads/kube-apiserver downloads/kube-controller-manager downloads/kube-scheduler downloads/kubectl \
-  etcd.service kube-apiserver.service kube-controller-manager.service kube-scheduler.service \
-  kube-scheduler.yaml kube-apiserver-to-kubelet.yaml \
-  certs/ca.crt certs/ca.key certs/kube-api-server.crt certs/kube-api-server.key certs/service-accounts.crt certs/service-accounts.key \
-  encryption-config.yaml \
-  "admin@${SERVER_IP}:~/"
-
-ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${SERVER_IP}" bash -s <<'REMOTE'
+  ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${SERVER_IP}" bash -s <<'REMOTE'
 set -euo pipefail
 sudo mv etcd etcdctl kube-apiserver kube-controller-manager kube-scheduler kubectl /usr/local/bin/
 sudo mkdir -p /etc/etcd /var/lib/etcd /var/lib/kubernetes /etc/kubernetes/config
@@ -49,10 +56,19 @@ sudo mv etcd.service kube-apiserver.service kube-controller-manager.service kube
 sudo systemctl daemon-reload
 sudo systemctl enable etcd kube-apiserver kube-controller-manager kube-scheduler
 sudo systemctl start etcd kube-apiserver kube-controller-manager kube-scheduler
-sleep 10
+REMOTE
+fi
+
+echo "Waiting for kube-apiserver readiness and applying kubelet RBAC"
+ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${SERVER_IP}" bash -s <<'REMOTE'
+set -euo pipefail
+for _ in $(seq 1 12); do
+  kubectl get --raw /readyz --kubeconfig admin.kubeconfig >/dev/null 2>&1 && break
+  sleep 5
+done
 kubectl apply -f kube-apiserver-to-kubelet.yaml --kubeconfig admin.kubeconfig
 REMOTE
 
 echo "Verifying control plane"
-ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${SERVER_IP}" \
-  "kubectl cluster-info --kubeconfig admin.kubeconfig"
+kubectl cluster-info --kubeconfig certs/admin.kubeconfig
+kubectl get componentstatuses --kubeconfig certs/admin.kubeconfig
