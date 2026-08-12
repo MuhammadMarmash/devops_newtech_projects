@@ -58,6 +58,7 @@ module "iam" {
 
   name_prefix     = var.name_prefix
   ssm_path_prefix = var.ssm_path_prefix
+  route_table_id  = module.network.private_route_table_id
 }
 
 module "jumpbox" {

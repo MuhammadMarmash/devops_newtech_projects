@@ -11,6 +11,13 @@ locals {
   ])
 
   kms_via_ssm = "ssm.${data.aws_region.current.region}.amazonaws.com"
+
+  route_table_arn = join("", [
+    "arn:", data.aws_partition.current.partition,
+    ":ec2:", data.aws_region.current.region,
+    ":", data.aws_caller_identity.current.account_id,
+    ":route-table/", var.route_table_id,
+  ])
 }
 
 data "aws_iam_policy_document" "ec2_assume" {
@@ -54,6 +61,13 @@ data "aws_iam_policy_document" "jumpbox" {
       variable = "kms:ViaService"
       values   = [local.kms_via_ssm]
     }
+  }
+
+  statement {
+    sid       = "ProgramPodCidrRoutes"
+    effect    = "Allow"
+    actions   = ["ec2:CreateRoute"]
+    resources = [local.route_table_arn]
   }
 }
 
