@@ -2,16 +2,23 @@
 set -euo pipefail
 
 : "${WORKER_IP:?WORKER_IP must be set}"
+: "${WORKER_NAME:?WORKER_NAME must be set}"
 
 cd "$HOME"
 
-ALREADY_BOOTSTRAPPED="$(ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${WORKER_IP}" \
+KUBELET_ACTIVE="$(ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${WORKER_IP}" \
   'systemctl is-active --quiet kubelet && echo yes || echo no')"
+NODE_REGISTERED="no"
+if kubectl get node "${WORKER_NAME}" --kubeconfig certs/admin.kubeconfig >/dev/null 2>&1; then
+  NODE_REGISTERED="yes"
+fi
 
-if [[ "${ALREADY_BOOTSTRAPPED}" == "yes" ]]; then
-  echo "kubelet is already active on ${WORKER_IP} — skipping worker bootstrap"
+if [[ "${KUBELET_ACTIVE}" == "yes" && "${NODE_REGISTERED}" == "yes" ]]; then
+  echo "kubelet is already active and ${WORKER_NAME} is already registered — skipping worker bootstrap"
   exit 0
 fi
+
+sed "s|NODENAME|${WORKER_NAME}|g" kubelet.service.template > kubelet.service
 
 ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${WORKER_IP}" "mkdir -p cni-plugins"
 
@@ -39,9 +46,9 @@ sudo mv containerd containerd-shim-runc-v2 containerd-stress /bin/
 sudo mv cni-plugins/* /opt/cni/bin/
 sudo mv 99-loopback.conf /etc/cni/net.d/
 sudo modprobe br-netfilter
-echo "br-netfilter" | sudo tee -a /etc/modules-load.d/modules.conf
-echo "net.bridge.bridge-nf-call-iptables = 1" | sudo tee -a /etc/sysctl.d/kubernetes.conf
-echo "net.bridge.bridge-nf-call-ip6tables = 1" | sudo tee -a /etc/sysctl.d/kubernetes.conf
+grep -qxF "br-netfilter" /etc/modules-load.d/modules.conf 2>/dev/null || echo "br-netfilter" | sudo tee -a /etc/modules-load.d/modules.conf
+grep -qxF "net.bridge.bridge-nf-call-iptables = 1" /etc/sysctl.d/kubernetes.conf 2>/dev/null || echo "net.bridge.bridge-nf-call-iptables = 1" | sudo tee -a /etc/sysctl.d/kubernetes.conf
+grep -qxF "net.bridge.bridge-nf-call-ip6tables = 1" /etc/sysctl.d/kubernetes.conf 2>/dev/null || echo "net.bridge.bridge-nf-call-ip6tables = 1" | sudo tee -a /etc/sysctl.d/kubernetes.conf
 sudo sysctl -p /etc/sysctl.d/kubernetes.conf
 sudo mkdir -p /etc/containerd
 sudo mv containerd-config.toml /etc/containerd/config.toml
@@ -50,7 +57,7 @@ sudo mv kube-proxy-config.yaml /var/lib/kube-proxy/
 sudo mv containerd.service kubelet.service kube-proxy.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable containerd kubelet kube-proxy
-sudo systemctl start containerd kubelet kube-proxy
+sudo systemctl restart containerd kubelet kube-proxy
 REMOTE
 
 echo "Verifying worker ${WORKER_IP}"

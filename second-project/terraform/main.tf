@@ -309,8 +309,8 @@ resource "null_resource" "worker_binaries_prepared" {
   }
 
   provisioner "file" {
-    source      = "${path.module}/scripts/kubelet.service"
-    destination = "/home/admin/kubelet.service"
+    source      = "${path.module}/scripts/kubelet.service.template"
+    destination = "/home/admin/kubelet.service.template"
   }
 
   provisioner "file" {
@@ -353,7 +353,7 @@ resource "null_resource" "worker_bootstrap" {
   provisioner "remote-exec" {
     inline = [
       "set -e",
-      "WORKER_IP=${each.value.private_ip} /home/admin/bootstrap-worker.sh",
+      "WORKER_IP=${each.value.private_ip} WORKER_NAME=${each.key} /home/admin/bootstrap-worker.sh",
     ]
   }
 }
