@@ -144,7 +144,7 @@ locals {
     service_cidr = var.service_cidr
   })
 
-  kube_proxy_service_rendered = templatefile("${path.module}/scripts/kube-proxy-config.yaml.template", {
+  kube_proxy_config_rendered = templatefile("${path.module}/scripts/kube-proxy-config.yaml.template", {
     pod_cidr = var.pod_cidr
   })
 }
@@ -271,7 +271,7 @@ resource "null_resource" "worker_binaries_prepared" {
       filesha1("${path.module}/scripts/99-loopback.conf"),
       filesha1("${path.module}/scripts/containerd-config.toml"),
       filesha1("${path.module}/scripts/kubelet-config.yaml"),
-      sha1(local.kube_proxy_service_rendered),
+      sha1(local.kube_proxy_config_rendered),
       filesha1("${path.module}/scripts/containerd.service"),
       filesha1("${path.module}/scripts/kubelet.service.template"),
       filesha1("${path.module}/scripts/kube-proxy.service"),
@@ -310,7 +310,7 @@ resource "null_resource" "worker_binaries_prepared" {
   }
 
   provisioner "file" {
-    content     = local.kube_proxy_service_rendered
+    content     = local.kube_proxy_config_rendered
     destination = "/home/admin/kube-proxy-config.yaml"
   }
 
