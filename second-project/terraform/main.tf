@@ -266,6 +266,17 @@ resource "null_resource" "control_plane_bootstrap" {
 resource "null_resource" "worker_binaries_prepared" {
   triggers = {
     server_ip = module.server.private_ip
+    staged_files = sha1(join("", [
+      filesha1("${path.module}/scripts/prepare-worker-binaries.sh"),
+      filesha1("${path.module}/scripts/99-loopback.conf"),
+      filesha1("${path.module}/scripts/containerd-config.toml"),
+      filesha1("${path.module}/scripts/kubelet-config.yaml"),
+      sha1(local.kube_proxy_service_rendered),
+      filesha1("${path.module}/scripts/containerd.service"),
+      filesha1("${path.module}/scripts/kubelet.service.template"),
+      filesha1("${path.module}/scripts/kube-proxy.service"),
+      filesha1("${path.module}/scripts/bootstrap-worker.sh"),
+    ]))
   }
 
   depends_on = [null_resource.control_plane_bootstrap]
@@ -337,7 +348,8 @@ resource "null_resource" "worker_bootstrap" {
   for_each = module.workers
 
   triggers = {
-    worker_ip = each.value.private_ip
+    worker_ip    = each.value.private_ip
+    staged_files = null_resource.worker_binaries_prepared.triggers.staged_files
   }
 
   depends_on = [null_resource.worker_binaries_prepared]
@@ -361,6 +373,10 @@ resource "null_resource" "worker_bootstrap" {
 resource "null_resource" "pod_networking" {
   triggers = {
     worker_node_data = local.worker_node_data_csv
+    staged_files = sha1(join("", [
+      filesha1("${path.module}/scripts/10-bridge.conf.template"),
+      filesha1("${path.module}/scripts/configure-pod-networking.sh"),
+    ]))
   }
 
   depends_on = [null_resource.worker_bootstrap]
