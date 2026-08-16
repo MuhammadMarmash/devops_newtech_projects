@@ -66,7 +66,7 @@ data "aws_iam_policy_document" "jumpbox" {
   statement {
     sid       = "ProgramPodCidrRoutes"
     effect    = "Allow"
-    actions   = ["ec2:CreateRoute"]
+    actions   = ["ec2:CreateRoute", "ec2:ReplaceRoute"]
     resources = [local.route_table_arn]
   }
 }

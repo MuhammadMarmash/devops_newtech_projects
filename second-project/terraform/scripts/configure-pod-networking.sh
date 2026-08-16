@@ -16,15 +16,23 @@ for entry in "${ENTRIES[@]}"; do
 
   echo "Waiting for ${name}'s pod CIDR"
   PODCIDR=""
-  for _ in $(seq 1 24); do
-    PODCIDR="$(kubectl get node "${name}" -o jsonpath='{.spec.podCIDR}' --kubeconfig certs/admin.kubeconfig 2>/dev/null || true)"
-    if [[ -n "${PODCIDR}" ]]; then
-      break
+  LAST_ERROR=""
+  for _ in $(seq 1 36); do
+    if PODCIDR="$(kubectl get node "${name}" -o jsonpath='{.spec.podCIDR}' --kubeconfig certs/admin.kubeconfig 2>/tmp/podcidr-error)"; then
+      if [[ -n "${PODCIDR}" ]]; then
+        break
+      fi
+    else
+      LAST_ERROR="$(cat /tmp/podcidr-error)"
     fi
     sleep 5
   done
+  rm -f /tmp/podcidr-error
   if [[ -z "${PODCIDR}" ]]; then
     echo "FAIL: ${name} never received a podCIDR" >&2
+    if [[ -n "${LAST_ERROR}" ]]; then
+      echo "Last kubectl error: ${LAST_ERROR}" >&2
+    fi
     exit 1
   fi
   echo "${name} podCIDR: ${PODCIDR}"
@@ -42,7 +50,12 @@ for entry in "${ENTRIES[@]}"; do
     --destination-cidr-block "${PODCIDR}" \
     --network-interface-id "${eni}" 2>&1); then
     if echo "${CREATE_OUTPUT}" | grep -q "RouteAlreadyExists"; then
-      echo "route for ${PODCIDR} already exists — skipping"
+      echo "route for ${PODCIDR} already exists — replacing to point at the current ENI"
+      aws ec2 replace-route \
+        --region "${REGION}" \
+        --route-table-id "${ROUTE_TABLE_ID}" \
+        --destination-cidr-block "${PODCIDR}" \
+        --network-interface-id "${eni}"
     else
       echo "${CREATE_OUTPUT}" >&2
       exit 1
