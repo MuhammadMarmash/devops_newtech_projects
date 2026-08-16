@@ -127,7 +127,7 @@ locals {
   ca_conf_rendered = templatefile("${path.module}/scripts/ca.conf.template", {
     service_cluster_ip = cidrhost(var.service_cidr, 1)
     server_private_ip  = module.server.private_ip
-    worker_names       = sort(keys(module.workers))
+    worker_ips         = { for name, w in module.workers : name => w.private_ip }
   })
 
   node_ips_csv = join(",", [for name, w in module.workers : "${name}=${w.private_ip}"])

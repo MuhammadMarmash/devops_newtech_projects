@@ -47,7 +47,7 @@ render_ca_conf() {
   local server_ip="$2"
   (
     cd "${TERRAFORM_DIR}" || exit 1
-    echo "templatefile(\"scripts/ca.conf.template\", { service_cluster_ip = \"10.32.0.1\", server_private_ip = \"${server_ip}\", worker_names = [\"node-0\", \"node-1\"] })" \
+    echo "templatefile(\"scripts/ca.conf.template\", { service_cluster_ip = \"10.32.0.1\", server_private_ip = \"${server_ip}\", worker_ips = { \"node-0\" = \"10.240.1.11\", \"node-1\" = \"10.240.1.12\" } })" \
       | terraform console
   ) | sed '1d;$d' >"${dest}"
 }

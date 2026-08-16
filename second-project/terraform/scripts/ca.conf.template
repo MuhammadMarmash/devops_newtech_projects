@@ -30,7 +30,7 @@ req_extensions     = default_req_extensions
 [service-accounts_distinguished_name]
 CN = service-accounts
 
-%{ for name in worker_names ~}
+%{ for name, ip in worker_ips ~}
 [${name}]
 distinguished_name = ${name}_distinguished_name
 prompt             = no
@@ -42,7 +42,7 @@ extendedKeyUsage     = clientAuth, serverAuth
 keyUsage             = critical, digitalSignature, keyEncipherment
 nsCertType           = client
 nsComment            = "${name} Certificate"
-subjectAltName       = DNS:${name}, IP:127.0.0.1
+subjectAltName       = DNS:${name}, IP:127.0.0.1, IP:${ip}
 subjectKeyIdentifier = hash
 
 [${name}_distinguished_name]
