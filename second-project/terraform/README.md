@@ -14,17 +14,25 @@ routing via real AWS VPC routes instead of upstream's hand-typed `ip route add`.
 
 ## Before you apply
 
-**Capacity.** `t3.micro` is capacity-starved in `eu-north-1`. If `jumpbox` fails to launch
-with `InsufficientInstanceCapacity`, it's not a bug — override in `terraform.tfvars`:
+**Capacity.** `t3.micro`/`t3.small` are capacity-starved in `eu-north-1` at times — a
+region with only 3 AZs and no unusual demand behind it. `InsufficientInstanceCapacity` on
+any machine is this, not a bug. Every `aws_instance` has a 5-minute create timeout, so a
+capacity failure surfaces in minutes rather than the ~55 minutes AWS's own SDK would
+otherwise spend retrying silently (which used to look exactly like a hang).
 
-```hcl
-availability_zone     = "eu-north-1b"
-jumpbox_instance_type = "t3.small"
+Rather than hand-editing `terraform.tfvars` and re-running `apply` per AZ, use:
+
+```bash
+./apply-with-az-retry.sh
 ```
 
-Terraform retries silently for a long time before surfacing this error, which looks like a
-hang. If `apply` seems stuck on the jumpbox for more than a couple of minutes, that's
-usually what's happening — check `Ctrl+C` and rerun `terraform plan` rather than waiting.
+It sweeps `eu-north-1a`/`b`/`c`, forces `t3.small` for the jumpbox, and — since each
+attempt is now fast — repeats the sweep up to 5 times with a short pause between rounds,
+since capacity in a small region frees up on the timescale of minutes, not never. It only
+moves on from a failure that's actually `InsufficientInstanceCapacity`; any other error
+stops it immediately rather than masking a real problem behind AZ-hopping. It uses
+`terraform apply -auto-approve` internally — reasonable here since it's retrying the exact
+plan you already reviewed, not skipping review of something new.
 
 **vCPU quota.** Default is 8 (`L-1216C47A`). Four `t3.small` machines already use all 8.
 Anything else running in the same region/account blocks the apply with a quota error, not
