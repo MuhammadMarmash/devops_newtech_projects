@@ -18,7 +18,7 @@ if [[ "${KUBELET_ACTIVE}" == "yes" && "${NODE_REGISTERED}" == "yes" ]]; then
   exit 0
 fi
 
-sed "s|NODENAME|${WORKER_NAME}|g" kubelet.service.template > kubelet.service
+sed "s|NODENAME|${WORKER_NAME}|g" kubelet.service.template > "kubelet-${WORKER_NAME}.service"
 
 ssh -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no "admin@${WORKER_IP}" "mkdir -p cni-plugins"
 
@@ -27,8 +27,12 @@ scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no \
   downloads/worker/containerd-shim-runc-v2 downloads/worker/containerd-stress \
   downloads/worker/runc downloads/worker/crictl \
   99-loopback.conf containerd-config.toml kubelet-config.yaml kube-proxy-config.yaml \
-  containerd.service kubelet.service kube-proxy.service \
+  containerd.service kube-proxy.service \
   "admin@${WORKER_IP}:~/"
+
+scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no \
+  "kubelet-${WORKER_NAME}.service" \
+  "admin@${WORKER_IP}:~/kubelet.service"
 
 scp -i "$HOME/kthw.pem" -o StrictHostKeyChecking=no \
   downloads/cni-plugins/* \
