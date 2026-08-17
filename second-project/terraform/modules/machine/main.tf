@@ -32,4 +32,8 @@ resource "aws_instance" "this" {
   tags = {
     Name = var.name
   }
+
+  timeouts {
+    create = "5m"
+  }
 }
