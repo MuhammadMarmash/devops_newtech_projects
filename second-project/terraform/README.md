@@ -1,16 +1,100 @@
 # Kubernetes The Hard Way — Automated on AWS
 
-A from-scratch Kubernetes cluster on AWS, built without `kubeadm`, brought up entirely by
-`terraform apply`. All five phases of the build exist in this codebase: infrastructure,
-PKI, control plane, worker bootstrap, and dynamic pod networking. Applied and verified on
-real AWS, including a cross-node pod-to-pod ping.
+A Kubernetes cluster — control plane, workers, PKI, and pod networking — built from
+scratch on AWS with no `kubeadm` and no managed control plane, brought up entirely by one
+`terraform apply`. Five dependent phases run in order and end with two pods, on two
+different EC2 instances, pinging each other across a pod network with no hand-assigned
+subnet anywhere in it. Applied and verified live on real AWS — `0% packet loss` on that
+final cross-node ping is this project's actual, original success criterion.
 
-This follows [Kelsey Hightower's Kubernetes The Hard Way](https://github.com/kelseyhightower/kubernetes-the-hard-way)
-faithfully where upstream's method survives automation, and departs from it deliberately
-(with the reasoning recorded below) where it doesn't. The two departures that matter most:
-no kubelet TLS bootstrapping (certs are generated centrally and copied out, matching
-upstream's own simpler method, rather than the harder self-service CSR flow) and pod
-routing via real AWS VPC routes instead of upstream's hand-typed `ip route add`.
+This follows [Kelsey Hightower's Kubernetes The Hard Way](https://github.com/kelseyhightower/kubernetes-the-hard-way) —
+the tutorial that builds Kubernetes one binary and one certificate at a time, specifically
+so the manual mechanics behind a managed control plane stop being a black box. That
+tutorial is explicitly written to be run by hand; this project automates every step of it
+anyway, including the one piece upstream doesn't attempt — dynamic per-node pod-CIDR
+allocation and routing, with no hand-typed subnet table.
+
+## At a glance
+
+- **~1,230 lines of Terraform** across a 5-module root (`network`, `security`, `iam`,
+  `ssm`, `machine`) plus **~600 lines of orchestration bash**, no separate orchestrator
+  process and no Python — everything past the base infrastructure runs as jumpbox-executed
+  shell over SSH
+- **42 AWS resources, 1 `apply`, 5 dependent phases**, zero manual steps after
+  `terraform apply` returns
+- **50 atomic commits**, each one a complete, buildable, independently reviewable step
+- Idempotent by design: a second `apply` against an already-running cluster is a no-op,
+  not a re-bootstrap
+
+## What this demonstrates
+
+- **Infrastructure as Code done properly** — real module boundaries instead of one flat
+  `main.tf`, workers keyed by name via `for_each` instead of a brittle `count` index,
+  content-hash-triggered provisioners so a script edit reliably forces the right re-run
+- **PKI from first principles** — a self-signed CA, six control-plane leaf certs, and one
+  cert per worker, generated, cross-verified, and distributed by script, with no
+  cert-manager and no external CA in the loop
+- **Kubernetes internals, not just its YAML** — `NodeRestriction` admission,
+  `--hostname-override`, the TLS SAN requirements behind the apiserver's dial-back to
+  kubelets, and dynamic `podCIDR` allocation via `--allocate-node-cidrs`
+- **Cloud networking** — a dedicated VPC, NAT-fronted private subnets, security groups that
+  account for AWS denying intra-VPC traffic Kubernetes assumes is flat, and AWS VPC routes
+  standing in for upstream's hand-typed host routes
+- **Least-privilege IAM** — two roles, one that writes cluster secrets to SSM and one that
+  can only read them, so a compromised worker can't rewrite the CA every future node trusts
+- **Debugging distributed systems on real infrastructure** — not toy examples; see below
+
+## Architecture
+
+```
+                        Internet
+                            │
+                    ┌───── IGW ─────┐
+                    │               │
+   public  10.240.0.0/24            │
+     jumpbox (public IP)  ──►  NAT gateway
+                                    │
+   private 10.240.1.0/24            │
+     server, node-0 … node-N  ──────┘  (egress only)
+```
+
+Pod network `10.200.0.0/16`, service network `10.32.0.0/24`, apiserver ClusterIP
+`10.32.0.1`. None of the four ranges overlap.
+
+## Engineering problems actually hit (and fixed)
+
+This cluster came up on the first design, but not on the first apply. These are the real
+bugs found and fixed against live AWS infrastructure, not caught in review:
+
+- **A race condition in parallel worker bootstrap.** Workers bootstrap concurrently via
+  Terraform's `for_each`, which does not guarantee sequential execution. An earlier fix
+  that rendered each worker's `kubelet.service` from its hostname wrote to one shared
+  filename on the jumpbox — two workers bootstrapping at once raced on that file, and one
+  could deploy with the wrong node identity. Fixed with a unique filename per worker.
+- **Nodes registering under the wrong identity.** kubelet defaults to registering under the
+  EC2-assigned hostname, but its certificate's CN is `system:node:node-N` — and the
+  apiserver's `NodeRestriction` admission plugin rejects any node object whose name doesn't
+  match. Fixed with a per-worker `--hostname-override`.
+- **A certificate SAN gap that TLS caught but `kubectl get nodes` didn't.** The apiserver
+  dials kubelets back directly by IP for `exec`/`logs`/metrics, and that connection is
+  TLS-verified against the worker's own certificate. Without an IP SAN on every worker
+  cert, the cluster looked perfectly healthy in `kubectl get nodes` while `kubectl exec`
+  failed certificate verification — a gap that only surfaces once you actually use the
+  cluster, not when you stand it up.
+- **A silent ~1-hour retry storm on AWS capacity errors.** `InsufficientInstanceCapacity`
+  wasn't failing fast — it was retrying for close to an hour before surfacing, which looked
+  exactly like a hang. The actual cause: the AWS Go SDK defaults to 25 retries, configured
+  deep inside the SDK client the Terraform provider itself builds — unreachable from a
+  resource-level `timeouts` block or the `AWS_MAX_ATTEMPTS` env var, both of which were
+  tried first and both of which did nothing. Fixed at the one setting that actually
+  controls it: `max_retries` on the provider block, found by reading the provider's own
+  source rather than guessing a second time.
+- **Dynamic pod networking with no hand-assigned subnets.** The one piece of upstream KTHW
+  that doesn't survive automation as-is: its tutorial hand-enters a static route per node
+  pair from a hand-typed subnet table. Replaced with `--allocate-node-cidrs` on the
+  controller manager plus a script that polls each node's `.spec.podCIDR` and programs one
+  AWS VPC route per worker — self-healing on node replacement via `replace-route`, with no
+  host-level route table to hand-maintain.
 
 ## Before you apply
 
@@ -77,23 +161,6 @@ A NAT gateway bills by the hour whether or not the cluster is doing anything:
 ```bash
 terraform destroy
 ```
-
-## Topology
-
-```
-                        Internet
-                            │
-                    ┌───── IGW ─────┐
-                    │               │
-   public  10.240.0.0/24            │
-     jumpbox (public IP)  ──►  NAT gateway
-                                    │
-   private 10.240.1.0/24            │
-     server, node-0 … node-N  ──────┘  (egress only)
-```
-
-Pod network `10.200.0.0/16`, service network `10.32.0.0/24`, apiserver ClusterIP
-`10.32.0.1`. None of the four ranges overlap.
 
 ## What `terraform apply` actually does
 
