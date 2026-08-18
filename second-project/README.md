@@ -137,7 +137,10 @@ relies on it.
 
 ## Quick start
 
+All commands below run from `terraform/`:
+
 ```bash
+cd terraform
 cp terraform.tfvars.example terraform.tfvars   # then narrow ssh_allowed_cidrs, adjust AZ/type if needed
 terraform init
 terraform apply
