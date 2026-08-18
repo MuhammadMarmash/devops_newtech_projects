@@ -24,6 +24,11 @@ terraform {
 provider "aws" {
   region = var.region
 
+  # The AWS SDK's own default is 25 retries (~1 hour) on retryable errors like
+  # InsufficientInstanceCapacity. A resource-level `timeouts` block cannot override this —
+  # only the provider's own max_retries can.
+  max_retries = 3
+
   # Applied to every taggable resource, so modules only tag what needs a Name.
   default_tags {
     tags = {

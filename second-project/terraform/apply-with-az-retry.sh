@@ -5,8 +5,6 @@ AZS=("eu-north-1a" "eu-north-1b" "eu-north-1c")
 ROUNDS=5
 SLEEP_BETWEEN_ROUNDS=60
 
-export AWS_MAX_ATTEMPTS=3
-
 LOG="$(mktemp)"
 trap 'rm -f "${LOG}"' EXIT
 

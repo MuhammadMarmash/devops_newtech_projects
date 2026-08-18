@@ -2,8 +2,8 @@
 
 A from-scratch Kubernetes cluster on AWS, built without `kubeadm`, brought up entirely by
 `terraform apply`. All five phases of the build exist in this codebase: infrastructure,
-PKI, control plane, worker bootstrap, and dynamic pod networking. Nothing has ever been
-applied to real AWS — this is the first live run.
+PKI, control plane, worker bootstrap, and dynamic pod networking. Applied and verified on
+real AWS, including a cross-node pod-to-pod ping.
 
 This follows [Kelsey Hightower's Kubernetes The Hard Way](https://github.com/kelseyhightower/kubernetes-the-hard-way)
 faithfully where upstream's method survives automation, and departs from it deliberately
@@ -16,9 +16,12 @@ routing via real AWS VPC routes instead of upstream's hand-typed `ip route add`.
 
 **Capacity.** `t3.micro`/`t3.small` are capacity-starved in `eu-north-1` at times — a
 region with only 3 AZs and no unusual demand behind it. `InsufficientInstanceCapacity` on
-any machine is this, not a bug. Every `aws_instance` has a 5-minute create timeout, so a
-capacity failure surfaces in minutes rather than the ~55 minutes AWS's own SDK would
-otherwise spend retrying silently (which used to look exactly like a hang).
+any machine is this, not a bug. The `aws` provider is configured with `max_retries = 3`
+(`versions.tf`) — the AWS Go SDK's own default is 25 retries, roughly an hour, before it
+surfaces a capacity error, and that retry budget lives inside the SDK client the provider
+builds, so neither a resource-level `timeouts` block nor the `AWS_MAX_ATTEMPTS` env var can
+override it. `max_retries` on the provider block is the one setting that actually does.
+With it set, a real capacity failure surfaces in well under a minute instead of ~55.
 
 Rather than hand-editing `terraform.tfvars` and re-running `apply` per AZ, use:
 
@@ -26,13 +29,13 @@ Rather than hand-editing `terraform.tfvars` and re-running `apply` per AZ, use:
 ./apply-with-az-retry.sh
 ```
 
-It sweeps `eu-north-1a`/`b`/`c`, forces `t3.small` for the jumpbox, and — since each
-attempt is now fast — repeats the sweep up to 5 times with a short pause between rounds,
-since capacity in a small region frees up on the timescale of minutes, not never. It only
-moves on from a failure that's actually `InsufficientInstanceCapacity`; any other error
-stops it immediately rather than masking a real problem behind AZ-hopping. It uses
-`terraform apply -auto-approve` internally — reasonable here since it's retrying the exact
-plan you already reviewed, not skipping review of something new.
+It sweeps `eu-north-1a`/`b`/`c`, forces `t3.small` for the jumpbox, and repeats the sweep up
+to 5 times with a short pause between rounds, since capacity in a small region frees up on
+the timescale of minutes, not never. It only moves on from a failure that's actually
+`InsufficientInstanceCapacity`; any other error stops it immediately rather than masking a
+real problem behind AZ-hopping. It uses `terraform apply -auto-approve` internally —
+reasonable here since it's retrying the exact plan you already reviewed, not skipping
+review of something new.
 
 **vCPU quota.** Default is 8 (`L-1216C47A`). Four `t3.small` machines already use all 8.
 Anything else running in the same region/account blocks the apply with a quota error, not
