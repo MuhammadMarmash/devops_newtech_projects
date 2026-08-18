@@ -6,12 +6,12 @@ terraform {
     }
   }
   backend "s3" {
-      bucket       = "mini-project1-tfstate-284483510847"
-      key          = "mini-project1/terraform.tfstate"
-      region       = "eu-north-1"
-      encrypt      = true
-      use_lockfile = true
-    }
+    bucket       = "mini-project1-tfstate-284483510847"
+    key          = "mini-project1/terraform.tfstate"
+    region       = "eu-north-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 provider "aws" {
   region = var.region

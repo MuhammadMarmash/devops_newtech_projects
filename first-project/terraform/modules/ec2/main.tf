@@ -14,14 +14,14 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_instance" "ec2_instance" {
-  ami             = data.aws_ami.ubuntu.id
-  instance_type   = var.instance_type
-  key_name        = aws_key_pair.my_key.key_name
-  subnet_id       = var.subnet_id
-  vpc_security_group_ids = [var.security_group_id]
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.instance_type
+  key_name                    = aws_key_pair.my_key.key_name
+  subnet_id                   = var.subnet_id
+  vpc_security_group_ids      = [var.security_group_id]
   associate_public_ip_address = true
   user_data_replace_on_change = true
-  iam_instance_profile = aws_iam_instance_profile.ssm.name
+  iam_instance_profile        = aws_iam_instance_profile.ssm.name
 
   root_block_device {
     volume_size = var.size
@@ -38,7 +38,7 @@ resource "aws_instance" "ec2_instance" {
     repo_url         = var.repo_url
     repo_branch      = var.repo_branch
     app_user         = var.app_user
-    app_home          = var.app_home
+    app_home         = var.app_home
     app_subdir       = var.app_subdir
     wsgi_target      = var.wsgi_target
     app_port         = var.app_port
@@ -63,24 +63,24 @@ resource "local_file" "private_key" {
 }
 
 resource "aws_iam_role" "ssm" {
-    name = "${var.project_name}-${var.environment}-ssm"
-    assume_role_policy = jsonencode({
-      Version = "2012-10-17"
-      Statement = [{
-        Effect    = "Allow"
-        Principal = { Service = "ec2.amazonaws.com" }
-        Action    = "sts:AssumeRole"
-      }]
-    })
-  }
-  resource "aws_iam_role_policy_attachment" "ssm_core" {
-    role       = aws_iam_role.ssm.name
-    policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-  }
-  resource "aws_iam_instance_profile" "ssm" {
-    name = "${var.project_name}-${var.environment}-ssm"
-    role = aws_iam_role.ssm.name
-  }
+  name = "${var.project_name}-${var.environment}-ssm"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+resource "aws_iam_role_policy_attachment" "ssm_core" {
+  role       = aws_iam_role.ssm.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+resource "aws_iam_instance_profile" "ssm" {
+  name = "${var.project_name}-${var.environment}-ssm"
+  role = aws_iam_role.ssm.name
+}
 
 resource "aws_eip" "ec2_eip" {
   domain = "vpc"
