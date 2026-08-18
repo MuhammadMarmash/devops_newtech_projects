@@ -38,16 +38,16 @@ variable "environment" {
 }
 
 variable "subnet_id" {
-    description = "The ID of the subnet to launch the instance in"
-    type        = string
-  }
+  description = "The ID of the subnet to launch the instance in"
+  type        = string
+}
 
 # ---- Application provisioning (user_data template) ------------------------
 
 variable "repo_url" {
   description = "HTTPS URL of the Git repository to clone and deploy"
   type        = string
-  default     = "https://github.com/MuhammadMarmash/devops-mini-project1.git"
+  default     = "https://github.com/MuhammadMarmash/aws-terraform-cicd-pipeline.git"
 }
 
 variable "repo_branch" {

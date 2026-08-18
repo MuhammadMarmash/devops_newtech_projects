@@ -18,7 +18,7 @@ resource "aws_iam_role" "github_deploy" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:MuhammadMarmash/devops-mini-project1:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub" = "repo:MuhammadMarmash/aws-terraform-cicd-pipeline:ref:refs/heads/main"
         }
       }
     }]
